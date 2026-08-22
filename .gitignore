@@ -1,0 +1,18 @@
+*.iml
+.gradle
+/local.properties
+local.properties
+
+# IDE state — never publish
+.idea/
+.kotlin/
+
+# codebase-memory MCP index (local SQLite knowledge graph)
+.codebase-memory/
+
+# Build outputs
+/build
+app/build
+/captures
+.externalNativeBuild
+.cxx
