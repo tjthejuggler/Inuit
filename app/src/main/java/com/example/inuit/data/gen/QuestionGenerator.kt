@@ -141,7 +141,8 @@ class QuestionGenerator(
             _state.value = GenState.Running("Assembling context…")
             val ctx = ContextBuilder(store).build()
             DebugLog.i(TAG, "context built: recent=${ctx.recentLines.size} unknownGroups=${ctx.unknownGroups.size} " +
-                "known=${ctx.knownLines.size} digest=${ctx.domainDigest.size} frontiers=${ctx.frontierLines.size}")
+                "known=${ctx.knownLines.size} digest=${ctx.domainDigest.size} " +
+                "distant=${ctx.distantFrontiers.size} revisits=${ctx.revisitFrontiers.size}")
 
             // ── MCP tools (budgeted) ──────────────────────────────────────
             var budget = s.mcpBudget

@@ -22,7 +22,7 @@ ABSOLUTE RULES:
    - Ladder from easier to closer: start from a baseline fact most people know, step closer to the target across successive batches (you will see which sub-questions were answered).
    - Vary the angle across batches (magnitude, comparison, ordering, unit, definition, cause, timeline).
    - Set "parent_hint" to the [U#] marker of the target you are decomposing.
-4. VARIETY — mix all four types (true_false, multiple_choice, numeric, fill_blank). Mix difficulties 1-5 (1 = most people know; 5 = expert). Include famous trivia AND delightfully obscure but rock-solid facts (statistics, magnitudes, records, etymology). At least 3 questions must open subdomains never present in the context.
+4. VARIETY — mix all four types (true_false, multiple_choice, numeric, fill_blank). Mix difficulties 1-5 (1 = most people know; 5 = expert). Include famous trivia AND delightfully obscure but rock-solid facts (statistics, magnitudes, records, etymology). At least half the batch must open subdomains never present in the context — breadth of the knowledge space matters more than depth.
 5. DOMAIN TAGS — tag every question with 1-3 hierarchical paths using " > " separators (e.g. "Science > Physics > Optics"). Reuse existing paths from the context when they fit; create deeper/more specific paths when the question is narrower. Top level must be one of the broad realms seen in context or an equally broad new one.
 6. WEB TOOLS — you may call the provided web search / web reader tools AT MOST $mcpBudget TIMES TOTAL for this whole batch, and only to (a) ground obscure statistics you are not already certain of, or (b) double-check a borderline fact. Never for common knowledge. If the budget is 0 or exhausted, generate only from certain knowledge.
 7. CONFIDENCE — report honest calibrated certainty per question (0-1). Questions below the threshold are discarded; do not inflate.
@@ -92,8 +92,13 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         if (ctx.domainDigest.isEmpty()) sb.append("(no stats yet)\n")
         else ctx.domainDigest.forEach { sb.append(it).append('\n') }
 
-        sb.append("\n== FRONTIERS (rarely or never explored — novelty pressure) ==\n")
-        ctx.frontierLines.forEach { sb.append("- ").append(it).append('\n') }
+        sb.append("\n== DISTANT FRONTIERS (maximally unlike anything recent — novelty pressure; obscure fields welcome) ==\n")
+        ctx.distantFrontiers.forEach { sb.append("- ").append(it).append('\n') }
+
+        if (ctx.revisitFrontiers.isNotEmpty()) {
+            sb.append("\n== REVISIT (older threads worth circling back to from a new angle) ==\n")
+            ctx.revisitFrontiers.forEach { sb.append("- ").append(it).append('\n') }
+        }
 
         val subCount = if (ctx.unknownGroups.isEmpty()) 0 else (batchSize * 0.4).toInt().coerceAtLeast(3)
         sb.append(
@@ -105,7 +110,11 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         } else {
             sb.append("all fresh exploration — ")
         }
-        sb.append("bias toward weak and frontier domains while still touching strong ones. ")
+        sb.append("MOST fresh-exploration questions must draw from the DISTANT FRONTIERS: fields far from anything the user has recently seen, ")
+            .append("including delightfully obscure ones. ")
+        if (ctx.revisitFrontiers.isNotEmpty()) {
+            sb.append("One or two may REVISIT an older thread from a new angle (different question type or facet, never a re-ask). ")
+        }
         sb.append("Use all four types (at least 2 questions per type). ")
         sb.append("Include at least 2 obscure-but-certain questions (statistics, magnitudes, records). ")
         sb.append("Prefer difficulty near the user's level: slightly above their comfort zone in weak areas, higher in strong areas.")

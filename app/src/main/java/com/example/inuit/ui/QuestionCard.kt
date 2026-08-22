@@ -2,7 +2,11 @@ package com.example.inuit.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,46 +23,48 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.Button
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionType
-import com.example.inuit.ui.theme.CorrectGreen
-import com.example.inuit.ui.theme.StreakFlame
-import com.example.inuit.ui.theme.WrongRed
+import com.example.inuit.ui.theme.Indigo
+import com.example.inuit.ui.theme.Teal
 import kotlin.random.Random
 
 /**
- * The question card. CRITICAL INVARIANT: this composable (and everything it
- * calls) must never render the question's stored answer — feedback is
- * correct/incorrect only. The app is Socratic by design.
+ * The question card. CRITICAL INVARIANTS:
+ *  - never render the question's stored answer,
+ *  - never signal whether an answer was correct or wrong — the acknowledgment
+ *    panel is deliberately neutral (blind training). The app is Socratic
+ *    by design; correctness only ever surfaces as aggregate, session-frozen
+ *    statistics that refresh when the user returns to the app.
  */
 @Composable
 fun QuestionCard(
     question: Question,
-    feedback: MainViewModel.Feedback.Result?,
+    feedback: MainViewModel.Feedback?,
     onSubmit: (raw: String, elapsedMs: Long) -> Unit,
     onNext: () -> Unit,
     onSkip: () -> Unit
@@ -71,31 +77,27 @@ fun QuestionCard(
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        border = BorderStroke(
+            1.dp,
+            Brush.horizontalGradient(
+                listOf(Indigo.copy(alpha = 0.40f), Teal.copy(alpha = 0.22f), MaterialTheme.colorScheme.outlineVariant)
+            )
+        )
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.padding(18.dp)) {
             // ── meta row ──────────────────────────────────────────────────
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TypeChip(question.type)
-                Spacer(Modifier.width(8.dp))
-                DifficultyDots(question.difficulty)
-                Spacer(Modifier.width(8.dp))
-                if (question.parentId != null) {
-                    Box(
-                        Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(MaterialTheme.colorScheme.secondaryContainer)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            "thread",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
+                Spacer(Modifier.width(10.dp))
+                DifficultyMeter(question.difficulty)
                 Spacer(Modifier.weight(1f))
+                if (question.parentId != null) {
+                    MetaTag("THREAD", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+                    Spacer(Modifier.width(6.dp))
+                }
                 question.domains.firstOrNull()?.let {
                     Text(
                         it,
@@ -107,14 +109,14 @@ fun QuestionCard(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
             Text(
                 question.prompt,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(18.dp))
 
             // ── answer input per type ─────────────────────────────────────
             when (question.type) {
@@ -134,9 +136,10 @@ fun QuestionCard(
                         question.choices.indices.shuffled(Random(question.id.hashCode().toLong() * 31))
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        order.forEach { idx ->
+                        order.forEachIndexed { position, idx ->
                             ChoiceButton(
                                 text = question.choices[idx],
+                                letter = ('A' + position),
                                 enabled = !answered,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
@@ -156,12 +159,14 @@ fun QuestionCard(
                             label = { Text("Your answer") },
                             suffix = question.unit?.let { { Text(it, style = MaterialTheme.typography.bodySmall) } },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.weight(1f)
                         )
                         Spacer(Modifier.width(10.dp))
                         Button(
                             onClick = { onSubmit(input, elapsedMs(startedAt)) },
-                            enabled = !answered && input.isNotBlank()
+                            enabled = !answered && input.isNotBlank(),
+                            shape = RoundedCornerShape(14.dp)
                         ) { Text("Submit") }
                     }
                 }
@@ -174,68 +179,68 @@ fun QuestionCard(
                             enabled = !answered,
                             singleLine = true,
                             label = { Text("Your answer") },
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.weight(1f)
                         )
                         Spacer(Modifier.width(10.dp))
                         Button(
                             onClick = { onSubmit(input, elapsedMs(startedAt)) },
-                            enabled = !answered && input.isNotBlank()
+                            enabled = !answered && input.isNotBlank(),
+                            shape = RoundedCornerShape(14.dp)
                         ) { Text("Submit") }
                     }
                 }
             }
 
-            // ── feedback (NEVER the answer) ───────────────────────────────
-            AnimatedVisibility(visible = answered) {
-                feedback?.let { fb ->
-                    Column {
-                        Spacer(Modifier.height(14.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (fb.correct) CorrectGreen.copy(alpha = 0.14f)
-                                    else WrongRed.copy(alpha = 0.14f)
-                                )
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
+            // ── neutral acknowledgment (NEVER correctness, NEVER the answer) ──
+            AnimatedVisibility(visible = answered, enter = fadeIn(), exit = fadeOut()) {
+                Column {
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f))
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        Box(
+                            Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(Brush.sweepGradient(listOf(Indigo, Teal, Indigo)))
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "Answer woven in — the pattern will emerge in time.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = onNext,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(14.dp)
                         ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    if (fb.correct) "Correct" else "Not quite",
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (fb.correct) CorrectGreen else WrongRed
-                                )
-                                if (!fb.correct) {
-                                    Text(
-                                        "Noted. Simpler threads will weave toward this one.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            if (fb.streak >= 2) {
-                                Text("🔥 ${fb.streak}", color = StreakFlame, fontWeight = FontWeight.Bold)
-                            }
+                            Text("Next question")
                         }
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(onClick = onNext, modifier = Modifier.weight(1f)) {
-                                Text("Next question")
-                            }
-                            OutlinedButton(onClick = onSkip, enabled = false) {
-                                Text("Skip")
-                            }
+                        OutlinedButton(
+                            onClick = onSkip,
+                            enabled = false,
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text("Skip")
                         }
                     }
                 }
             }
 
             if (!answered) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.End) {
-                    OutlinedButton(onClick = onSkip) { Text("Skip") }
+                    OutlinedButton(onClick = onSkip, shape = RoundedCornerShape(14.dp)) { Text("Skip") }
                 }
             }
         }
@@ -245,16 +250,18 @@ fun QuestionCard(
 private fun elapsedMs(startedAtNanos: Long): Long =
     (System.nanoTime() - startedAtNanos) / 1_000_000L
 
+// ── small meta components ─────────────────────────────────────────────────
+
 @Composable
 private fun TypeChip(type: QuestionType) {
     Box(
         Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.primaryContainer)
-            .padding(horizontal = 8.dp, vertical = 3.dp)
+            .padding(horizontal = 9.dp, vertical = 3.dp)
     ) {
         Text(
-            type.displayName,
+            type.displayName.uppercase(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
@@ -262,21 +269,36 @@ private fun TypeChip(type: QuestionType) {
 }
 
 @Composable
-private fun DifficultyDots(difficulty: Int) {
-    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+private fun MetaTag(text: String, bg: androidx.compose.ui.graphics.Color, fg: androidx.compose.ui.graphics.Color) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+    ) {
+        Text(text, style = MaterialTheme.typography.labelSmall, color = fg)
+    }
+}
+
+/** Segmented difficulty meter (1–5) — reads like an instrument gauge. */
+@Composable
+private fun DifficultyMeter(difficulty: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
         repeat(5) { i ->
             Box(
                 Modifier
-                    .size(7.dp)
-                    .clip(CircleShape)
+                    .size(width = 10.dp, height = 5.dp)
+                    .clip(RoundedCornerShape(2.dp))
                     .background(
                         if (i < difficulty) MaterialTheme.colorScheme.tertiary
-                        else MaterialTheme.colorScheme.outline
+                        else MaterialTheme.colorScheme.surfaceVariant
                     )
             )
         }
     }
 }
+
+// ── answer controls ───────────────────────────────────────────────────────
 
 @Composable
 private fun BigChoiceButton(
@@ -285,29 +307,65 @@ private fun BigChoiceButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    Button(onClick = onClick, enabled = enabled, modifier = modifier.height(52.dp)) {
-        Text(text, style = MaterialTheme.typography.titleMedium)
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.height(54.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        )
+    ) {
+        Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
     }
 }
 
 @Composable
 private fun ChoiceButton(
     text: String,
+    letter: Char,
     enabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    OutlinedButton(onClick = onClick, enabled = enabled, modifier = modifier) {
-        Text(text, style = MaterialTheme.typography.bodyMedium)
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.height(50.dp),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Box(
+            Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                letter.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Left,
+            modifier = Modifier.weight(1f, fill = false)
+        )
     }
 }
+
+// ── collapsed form ────────────────────────────────────────────────────────
 
 /** Collapsed one-line form of the question card (stats browsing mode). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CollapsedQuestionBar(
     question: Question?,
-    feedback: MainViewModel.Feedback.Result?,
     onExpand: () -> Unit
 ) {
     Card(
@@ -315,22 +373,15 @@ fun CollapsedQuestionBar(
             .fillMaxWidth()
             .animateContentSize(),
         onClick = onExpand,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
-            if (feedback != null) {
-                Box(
-                    Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(if (feedback.correct) CorrectGreen else WrongRed)
-                )
-            } else {
-                TypeChip(question?.type ?: QuestionType.MULTIPLE_CHOICE)
-            }
+            TypeChip(question?.type ?: QuestionType.MULTIPLE_CHOICE)
             Spacer(Modifier.width(10.dp))
             Text(
                 question?.prompt ?: "Tap for the next question",

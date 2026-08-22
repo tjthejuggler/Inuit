@@ -1,5 +1,6 @@
 package com.example.inuit.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,12 +26,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.inuit.data.KnowledgeSummary
 import com.example.inuit.data.StatsCalculator
@@ -41,13 +43,20 @@ import com.example.inuit.ui.charts.RadarChart
 import java.time.format.TextStyle
 import java.util.Locale
 
-/** The whole stats panel rendered below the (collapsible) question card. */
+/**
+ * The whole stats panel rendered below the (collapsible) question card.
+ *
+ * BLIND-TRAINING NOTE: this snapshot is frozen for the duration of a
+ * session — it reflects everything answered up to the moment the user
+ * last entered the app, never the current session's answers.
+ */
 @Composable
 fun StatsPanel(
     stats: StatsCalculator.Snapshot,
-    summaries: List<KnowledgeSummary>
+    summaries: List<KnowledgeSummary>,
+    liveQueueSize: Int
 ) {
-    OverviewChips(stats)
+    OverviewChips(stats, liveQueueSize)
     if (stats.totalAnswers == 0) {
         EmptyStatsCard()
         return
@@ -65,20 +74,29 @@ fun StatsPanel(
 // ── overview chips ────────────────────────────────────────────────────────
 
 @Composable
-private fun OverviewChips(stats: StatsCalculator.Snapshot) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        StatChip("Answered", "${stats.totalAnswers}")
-        StatChip("Accuracy", "${(stats.accuracy * 100).toInt()}%")
-        StatChip("Streak", "${stats.streak}", highlight = stats.streak >= 3)
-        StatChip("Best", "${stats.bestStreak}")
-        StatChip("Realms", "${stats.domainsExplored}")
-        StatChip("Topics", "${stats.distinctDomains}")
-        StatChip("Queue", "${stats.queueSize}")
+private fun OverviewChips(stats: StatsCalculator.Snapshot, liveQueueSize: Int) {
+    Column {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            StatChip("Answered", "${stats.totalAnswers}")
+            StatChip("Accuracy", "${(stats.accuracy * 100).toInt()}%")
+            StatChip("Streak", "${stats.streak}", highlight = stats.streak >= 3)
+            StatChip("Best", "${stats.bestStreak}")
+            StatChip("Realms", "${stats.domainsExplored}")
+            StatChip("Topics", "${stats.distinctDomains}")
+            StatChip("Queue", "$liveQueueSize")
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Reflects every answer up to your last visit — this session stays unread.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
 }
 
@@ -86,7 +104,7 @@ private fun OverviewChips(stats: StatsCalculator.Snapshot) {
 private fun StatChip(label: String, value: String, highlight: Boolean = false) {
     Column(
         Modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(
                 if (highlight) MaterialTheme.colorScheme.primaryContainer
                 else MaterialTheme.colorScheme.surface
@@ -100,7 +118,7 @@ private fun StatChip(label: String, value: String, highlight: Boolean = false) {
             color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
         )
         Text(
-            label,
+            label.uppercase(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -215,7 +233,7 @@ private fun MiniDomainRow(d: StatsCalculator.DomainAgg) {
             short,
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -446,16 +464,29 @@ fun SectionCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 0.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(Modifier.padding(16.dp)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(width = 3.dp, height = 14.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
             if (subtitle != null) {
+                Spacer(Modifier.height(2.dp))
                 Text(
                     subtitle,
                     style = MaterialTheme.typography.labelSmall,

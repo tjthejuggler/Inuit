@@ -3,6 +3,7 @@ package com.example.inuit.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,16 +32,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.inuit.data.gen.QuestionGenerator.GenState
-import com.example.inuit.ui.theme.CorrectGreen
-import com.example.inuit.ui.theme.WrongRed
+import com.example.inuit.ui.theme.Indigo
+import com.example.inuit.ui.theme.Rose
+import com.example.inuit.ui.theme.Teal
 
 /**
  * Main screen: a collapsible question card pinned on top; everything below
- * is the stats/knowledge-map scroll.
+ * is the stats/knowledge-map scroll. Stats are session-frozen (blind
+ * training): they refresh only when the user returns to the app.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,15 +61,32 @@ fun MainScreen(
     val genState by viewModel.genState.collectAsStateWithLifecycle()
     val collapsed by viewModel.questionCollapsed.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val queueSize by viewModel.queueSize.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Inuit", fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.width(10.dp))
-                        GenerationStatusChip(genState, queueSize = stats.queueSize)
+                        Column {
+                            Text(
+                                "Inuit",
+                                fontWeight = FontWeight.Bold,
+                                style = TextStyle(
+                                    brush = Brush.horizontalGradient(listOf(Indigo, Teal))
+                                )
+                            )
+                            Text(
+                                "INTUITION TRAINER",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.sp,
+                                    letterSpacing = 2.5.sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        GenerationStatusChip(genState, queueSize = queueSize)
                     }
                 },
                 actions = {
@@ -81,7 +104,7 @@ fun MainScreen(
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            contentPadding = PaddingValues(
                 start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 24.dp
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -92,7 +115,6 @@ fun MainScreen(
                     if (collapsed) {
                         CollapsedQuestionBar(
                             question = q,
-                            feedback = feedback,
                             onExpand = { viewModel.setCollapsed(false) }
                         )
                     } else {
@@ -128,7 +150,7 @@ fun MainScreen(
             }
 
             item(key = "stats") {
-                StatsPanel(stats = stats, summaries = summaries)
+                StatsPanel(stats = stats, summaries = summaries, liveQueueSize = queueSize)
             }
         }
     }
@@ -143,13 +165,13 @@ private fun GenerationStatusChip(state: GenState, queueSize: Int) {
             state.note
         )
         is GenState.Error -> Triple(
-            WrongRed.copy(alpha = 0.15f),
-            WrongRed,
+            Rose.copy(alpha = 0.14f),
+            Rose,
             "⚠ ${state.message.take(60)}"
         )
         is GenState.Completed -> Triple(
-            CorrectGreen.copy(alpha = 0.15f),
-            CorrectGreen,
+            Teal.copy(alpha = 0.14f),
+            Teal,
             "+${state.added} queued"
         )
         GenState.Idle -> Triple(
@@ -193,7 +215,7 @@ private fun EmptyQueueCard(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(MaterialTheme.colorScheme.surface)
             .padding(24.dp)
     ) {
@@ -222,7 +244,7 @@ private fun EmptyQueueCard(
             }
 
             genState is GenState.Error -> {
-                Text("Generation failed", color = WrongRed, fontWeight = FontWeight.Bold)
+                Text("Generation failed", color = Rose, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 Text(
                     genState.message,

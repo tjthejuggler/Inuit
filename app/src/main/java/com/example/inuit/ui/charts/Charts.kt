@@ -59,7 +59,9 @@ private fun lerp(a: Color, b: Color, t: Float): Color = Color(
 fun RadarChart(
     entries: List<Pair<String, Float>>,
     modifier: Modifier = Modifier,
-    lineColor: Color = MaterialTheme.colorScheme.outline
+    lineColor: Color = MaterialTheme.colorScheme.outline,
+    dataColor: Color = MaterialTheme.colorScheme.primary,
+    vertexColor: Color = MaterialTheme.colorScheme.secondary
 ) {
     if (entries.isEmpty()) return
     val n = max(entries.size, 3)
@@ -104,14 +106,14 @@ fun RadarChart(
             if (i == 0) data.moveTo(p.x, p.y) else data.lineTo(p.x, p.y)
         }
         data.close()
-        drawPath(data, Color(0xFF8FA7FF).copy(alpha = 0.22f))
-        drawPath(data, Color(0xFF8FA7FF), style = Stroke(2.4f))
+        drawPath(data, dataColor.copy(alpha = 0.22f))
+        drawPath(data, dataColor, style = Stroke(2.4f))
         // vertex dots
         for (i in 0 until n) {
             val v = entries[i % entries.size].second.coerceIn(0f, 1f)
             val r = radius * (0.12f + 0.88f * v)
             val a = startAngle + i * angleStep
-            drawCircle(Color(0xFF5ED4C8), 4.5f, Offset(cx + (r * kotlin.math.cos(a)).toFloat(), cy + (r * kotlin.math.sin(a)).toFloat()))
+            drawCircle(vertexColor, 4.5f, Offset(cx + (r * kotlin.math.cos(a)).toFloat(), cy + (r * kotlin.math.sin(a)).toFloat()))
         }
         // labels
         drawIntoCanvasLabels(entries, cx, cy, radius, startAngle, angleStep, labelPaint)
@@ -170,7 +172,7 @@ fun ProficiencyBar(
                 .fillMaxWidth()
                 .height(8.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(Color(0xFF232C45))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Box(
                 Modifier
@@ -199,7 +201,8 @@ fun ProficiencyBar(
 fun LineChart(
     values: List<Float>,
     modifier: Modifier = Modifier,
-    color: Color = Color(0xFF5ED4C8),
+    color: Color = MaterialTheme.colorScheme.secondary,
+    gridColor: Color = MaterialTheme.colorScheme.surfaceVariant,
     minY: Float = 0f,
     maxY: Float = 1f
 ) {
@@ -214,7 +217,7 @@ fun LineChart(
         // grid
         for (g in 1..3) {
             val gy = pad + h * g / 4f
-            drawLine(Color(0xFF232C45), Offset(pad, gy), Offset(pad + w, gy), 1f)
+            drawLine(gridColor, Offset(pad, gy), Offset(pad + w, gy), 1f)
         }
         val stepX = w / (values.size - 1)
         val path = Path()
@@ -243,7 +246,8 @@ fun LineChart(
 fun BarChart(
     values: List<Pair<String, Int>>,
     modifier: Modifier = Modifier,
-    barColor: Color = Color(0xFF8FA7FF)
+    barColor: Color = MaterialTheme.colorScheme.primary,
+    emptyColor: Color = MaterialTheme.colorScheme.surfaceVariant
 ) {
     if (values.isEmpty()) return
     val labelPaint = android.graphics.Paint().apply {
@@ -264,7 +268,7 @@ fun BarChart(
             val x = pad + slot * i + (slot - barW) / 2f
             val barH = if (v == 0) 2f else h * v / maxV
             drawRoundRect(
-                color = if (v == 0) Color(0xFF232C45) else barColor.copy(alpha = 0.85f),
+                color = if (v == 0) emptyColor else barColor.copy(alpha = 0.85f),
                 topLeft = Offset(x, pad + h - barH),
                 size = Size(barW, barH),
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f)
@@ -286,7 +290,7 @@ fun ProficiencyRing(
     modifier: Modifier = Modifier,
     stroke: Dp = 5.dp,
     sizeDp: Dp = 34.dp,
-    trackColor: Color = Color(0xFF232C45)
+    trackColor: Color = MaterialTheme.colorScheme.surfaceVariant
 ) {
     val color = proficiencyColor(progress)
     Box(modifier = modifier.size(sizeDp), contentAlignment = Alignment.Center) {

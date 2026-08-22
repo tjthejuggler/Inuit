@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -29,17 +28,30 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     private val store = graph.store
     private val rng = Random.Default
 
+    // ── session boundary (blind-training invariant) ──────────────────────
+    // The user must NEVER learn whether specific answers were right or
+    // wrong. Answers are graded and persisted, but everything that could
+    // reflect correctness — stats, knowledge summaries, Socratic follow-up
+    // threads — is frozen at the moment the session started and only
+    // refreshes when the user comes back to the app (onResume).
+
+    private var sessionBoundaryMs: Long = System.currentTimeMillis()
+
+    /** Ticks only on session start / app resume — drives stats recomputation. */
+    private val statsEpoch = MutableStateFlow(0L)
+
     // ── current question & feedback ──────────────────────────────────────
 
     private val _currentQuestion = MutableStateFlow<Question?>(null)
     val currentQuestion: StateFlow<Question?> = _currentQuestion.asStateFlow()
 
+    /** Neutral acknowledgment — carries NO correctness information. */
     sealed interface Feedback {
-        data class Result(val correct: Boolean, val streak: Int) : Feedback
+        data object Recorded : Feedback
     }
 
-    private val _feedback = MutableStateFlow<Feedback.Result?>(null)
-    val feedback: StateFlow<Feedback.Result?> = _feedback.asStateFlow()
+    private val _feedback = MutableStateFlow<Feedback?>(null)
+    val feedback: StateFlow<Feedback?> = _feedback.asStateFlow()
 
     /** Shown when the question card is collapsed. */
     private val _questionCollapsed = MutableStateFlow(false)
@@ -60,9 +72,21 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     /**
-     * Selection strategy: sometimes surface a sub-question of a recently
-     * missed lineage (Socratic thread); otherwise a random fresh question
-     * with domain diversity and a skip penalty.
+     * Called from the Activity on ON_RESUME: the user came back to the app,
+     * so the frozen session stats may now absorb everything answered so far
+     * and a new session boundary begins.
+     */
+    fun onSessionResume() {
+        sessionBoundaryMs = System.currentTimeMillis()
+        statsEpoch.value = statsEpoch.value + 1L
+    }
+
+    /**
+     * Selection strategy: sometimes surface a sub-question of a lineage
+     * missed in a PREVIOUS session (Socratic thread — gating on the session
+     * boundary so a follow-up can never betray how the question just
+     * answered went); otherwise a fresh question chosen for maximal realm
+     * distance from the last few questions, with a skip penalty.
      */
     fun pickNext() {
         val queue = store.queue()
@@ -74,21 +98,30 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         val current = _currentQuestion.value
         val candidates = queue.filter { it.id != current?.id }.ifEmpty { queue }
 
-        val recentWrongRoots = store.snapshotAnswers()
-            .takeLast(12)
+        // Only lineages missed BEFORE this session started may spawn threads.
+        val priorWrongRoots = store.snapshotAnswers()
+            .filter { it.timestamp < sessionBoundaryMs }
+            .takeLast(40)
             .filter { !it.correct }
             .mapNotNull { a -> store.questionById(a.questionId)?.let { q -> q.rootId ?: q.id } }
             .toSet()
         val subQuestions = candidates.filter {
-            it.rootId != null && it.id != it.rootId && it.rootId in recentWrongRoots
+            it.rootId != null && it.id != it.rootId && it.rootId in priorWrongRoots
         }
 
-        val lastDomain = current?.domains?.firstOrNull()
+        // Realm-distance pressure: avoid the top-level realms of the last
+        // few questions so consecutive questions leap across the space.
+        val recentRealms = store.snapshotAnswers()
+            .takeLast(REALM_MEMORY)
+            .mapNotNull { a -> store.questionById(a.questionId)?.domains?.firstOrNull()?.substringBefore(" > ") }
+            .toSet()
+
         val pick = if (subQuestions.isNotEmpty() && rng.nextInt(100) < 35) {
             subQuestions.random(rng)
         } else {
-            val diverse = candidates.filter { q -> q.domains.firstOrNull() != lastDomain }
-                .ifEmpty { candidates }
+            val diverse = candidates.filter { q ->
+                q.domains.firstOrNull()?.substringBefore(" > ") !in recentRealms
+            }.ifEmpty { candidates }
             val fresh = diverse.filter { it.skipCount == 0 }.ifEmpty { diverse }
             fresh.random(rng)
         }
@@ -96,17 +129,13 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         _feedback.value = null
     }
 
-    /** Grades locally (answer never leaves the grader), records, refills queue. */
+    /** Grades locally (verdict never reaches the UI), records, refills queue. */
     fun submitAnswer(raw: String, elapsedMs: Long) {
         val q = _currentQuestion.value ?: return
         if (_feedback.value != null) return
         val correct = Grader.grade(q, raw)
         store.recordAnswer(q.id, correct, raw, elapsedMs)
-        var streak = 0
-        for (a in store.snapshotAnswers().asReversed()) {
-            if (a.correct) streak++ else break
-        }
-        _feedback.value = Feedback.Result(correct, streak)
+        _feedback.value = Feedback.Recorded
         graph.generator.maybeGenerate()
     }
 
@@ -115,20 +144,25 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         pickNext()
     }
 
-    // ── stats ────────────────────────────────────────────────────────────
+    // ── stats (frozen per session; refresh only on app resume) ───────────
 
     val stats: StateFlow<StatsCalculator.Snapshot> =
-        combine(store.dataVersion, graph.generator.state) { v, _ -> v }
+        statsEpoch
             .map { withContext(Dispatchers.Default) { computeSnapshot() } }
             .stateIn(
                 viewModelScope,
                 SharingStarted.WhileSubscribed(5_000),
-                run { StatsCalculator.compute(emptyList(), emptyList(), emptyList(), 0) }
+                computeSnapshot()
             )
 
-    val knowledgeSummaries = combine(store.dataVersion, graph.generator.state) { v, _ -> v }
+    val knowledgeSummaries = statsEpoch
         .map { store.snapshotSummaries() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), store.snapshotSummaries())
+
+    /** Live queue depth — operational info only, safe to update in real time. */
+    val queueSize: StateFlow<Int> = store.dataVersion
+        .map { store.queueSize() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), store.queueSize())
 
     private fun computeSnapshot(): StatsCalculator.Snapshot =
         StatsCalculator.compute(
@@ -239,6 +273,9 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     companion object {
+        /** How many recent answers define the "recent realms" to leap away from. */
+        private const val REALM_MEMORY = 6
+
         fun factory(graph: AppGraph): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = MainViewModel(graph) as T

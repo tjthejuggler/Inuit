@@ -36,7 +36,8 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         val knownLines: List<String>,
         val domainDigest: List<String>,
         val summaries: List<KnowledgeSummary>,
-        val frontierLines: List<String>,
+        val distantFrontiers: List<String>,
+        val revisitFrontiers: List<String>,
         val totalsLine: String
     ) {
         val markerToQuestion: Map<String, Question>
@@ -105,16 +106,21 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         for (s in strongest) digest.add("strong ${renderStat(s)}")
         for (s in active) digest.add("active ${renderStat(s)}")
 
-        // ── frontiers (novelty pressure) ──────────────────────────────────
-        val seenPaths = stats.map { it.path }.toSet()
-        val untouched = SEED_FRONTIERS.filter { it !in seenPaths }
-        val frontierPool = (frontiers + untouched).distinct()
-        val frontierLines = frontierPool.take(12).ifEmpty { listOf(SEED_FRONTIER_FALLBACK) }
+        // ── frontiers (serendipity: distant exploration + circling back) ──
+        val plan = Serendipity.planFrontiers(
+            recentAnswers = answers,
+            questionsById = byId,
+            domainStats = stats,
+            llmFrontiers = frontiers,
+            rng = rng
+        )
+        val distant = plan.distant.ifEmpty { listOf(RealmTaxonomy.ALL_REALMS[rng.nextInt(RealmTaxonomy.ALL_REALMS.size)]) }
+        val revisits = plan.revisits
 
         val totals = "answers=${answers.size} correct=${answers.count { it.correct }} " +
             "questionsAsked=${questions.count { it.servedCount > 0 }} queued=${store.queueSize()}"
 
-        return Context(recentLines, unknownGroups, knownLines, digest.toList(), summaries, frontierLines, totals)
+        return Context(recentLines, unknownGroups, knownLines, digest.toList(), summaries, distant, revisits, totals)
     }
 
     private fun statusOf(questionId: String, answers: List<AnswerRecord>): String {
@@ -140,18 +146,5 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         private const val OLDER_ROOTS = 5
         private const val LINEAGE_MAX = 8
         private const val KNOWN_SAMPLE = 8
-        private const val SEED_FRONTIER_FALLBACK = "Mathematics"
-
-        /** Diverse seed realms used until real stats accumulate. */
-        val SEED_FRONTIERS = listOf(
-            "Science > Physics", "Science > Chemistry", "Science > Biology",
-            "Mathematics", "History", "Geography", "Literature", "Music",
-            "Visual Arts", "Philosophy", "Religion & Mythology", "Language & Etymology",
-            "Technology & Computing", "Engineering", "Medicine & Human Body",
-            "Psychology & Mind", "Economics & Finance", "Law & Politics",
-            "Sports & Games", "Food & Cooking", "Everyday Statistics",
-            "Nature & Animals", "Space & Astronomy", "Culture & Folklore",
-            "Measurement & Units", "Inventions & Discoveries"
-        )
     }
 }

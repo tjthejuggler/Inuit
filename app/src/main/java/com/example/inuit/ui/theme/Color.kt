@@ -2,28 +2,34 @@ package com.example.inuit.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Deep-space dark palette — stats and charts read best on dark.
-val Ink = Color(0xFF0A0E1A)          // background
-val InkSurface = Color(0xFF111627)   // cards
-val InkRaised = Color(0xFF1B2338)    // elevated elements
-val InkOutline = Color(0xFF2C3654)
+// ── Deep-space palette ─────────────────────────────────────────────────────
+// Dark-first: charts and the knowledge map are designed for dark canvases.
 
-val TextPrimary = Color(0xFFE7EAF3)
-val TextSecondary = Color(0xFF9AA3BC)
-val TextFaint = Color(0xFF5E6884)
+val Ink = Color(0xFF060A13)          // app background (near-black navy)
+val InkSurface = Color(0xFF0D1322)   // cards
+val InkRaised = Color(0xFF151D31)    // elevated elements / chips
+val InkOutline = Color(0xFF243052)
+val InkHairline = Color(0xFF1B2440)  // subtle card borders
 
-val Indigo = Color(0xFF8FA7FF)       // primary
-val IndigoDim = Color(0xFF232F5C)
-val Teal = Color(0xFF5ED4C8)         // secondary
-val Amber = Color(0xFFF0B45C)        // tertiary
+val TextPrimary = Color(0xFFE9EDF8)
+val TextSecondary = Color(0xFF96A0BD)
+val TextFaint = Color(0xFF5B6582)
+
+// ── Accents ────────────────────────────────────────────────────────────────
+val Indigo = Color(0xFF8C9EFF)       // primary
+val IndigoDeep = Color(0xFF5C6CE8)
+val IndigoDim = Color(0xFF212C55)
+val Teal = Color(0xFF53D6C9)         // secondary
+val TealDim = Color(0xFF0F4A44)
+val Amber = Color(0xFFF2B75C)        // tertiary
 val Rose = Color(0xFFFF8A80)         // error
 
-val CorrectGreen = Color(0xFF4ADE80)
-val WrongRed = Color(0xFFF87171)
+// Diagnostic-only colors (Settings log viewer). NEVER used for answer
+// feedback — the app must not reveal whether an answer was correct.
+val LogOk = Color(0xFF4ADE80)
+val LogErr = Color(0xFFF87171)
 
-val StreakFlame = Color(0xFFFB923C)
-
-// proficiency gradient (red → amber → green)
+// Proficiency gradient (red → amber → green) for the frozen stats views.
 val ProfLow = Color(0xFFE15759)
 val ProfMid = Color(0xFFF5A623)
 val ProfHigh = Color(0xFF3FCF8E)

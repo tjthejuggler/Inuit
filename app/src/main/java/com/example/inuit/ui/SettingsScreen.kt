@@ -55,7 +55,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
 import com.example.inuit.ui.theme.Amber
-import com.example.inuit.ui.theme.WrongRed
+import com.example.inuit.ui.theme.LogErr
+import com.example.inuit.ui.theme.LogOk
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -290,7 +291,7 @@ private fun DiagnosticsCard() {
                         text = DebugLog.formatEntry(e),
                         style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                         color = when (e.level) {
-                            DebugLog.ERROR -> WrongRed
+                            DebugLog.ERROR -> LogErr
                             DebugLog.WARN -> Amber
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
@@ -341,7 +342,7 @@ private fun TestResultView(result: MainViewModel.TestResult?) {
             Text(
                 "✓ ${result.message}",
                 style = MaterialTheme.typography.bodySmall,
-                color = com.example.inuit.ui.theme.CorrectGreen,
+                color = com.example.inuit.ui.theme.LogOk,
                 maxLines = 6,
                 overflow = TextOverflow.Ellipsis
             )
@@ -351,7 +352,7 @@ private fun TestResultView(result: MainViewModel.TestResult?) {
             Text(
                 "✗ ${result.message}",
                 style = MaterialTheme.typography.bodySmall,
-                color = com.example.inuit.ui.theme.WrongRed,
+                color = com.example.inuit.ui.theme.LogErr,
                 maxLines = 6,
                 overflow = TextOverflow.Ellipsis
             )

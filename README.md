@@ -13,10 +13,14 @@ heart of the app.
 
 ## Core principles (do not violate these when evolving the codebase)
 
-1. **Never reveal answers.** Not after a wrong answer, not in stats, not in hints,
-   not in logs rendered to the user. The correct answer is stored (needed for
-   grading and for the generator), but no UI path may ever display it. Feedback is
-   limited to "correct / not quite" plus streaks.
+1. **Never reveal answers — and never reveal correctness.** Not after a wrong
+   answer, not in stats, not in hints, not in logs rendered to the user. The
+   correct answer is stored (needed for grading and for the generator), but no
+   UI path may ever display it. The user must not know whether any specific
+   answer was right or wrong: feedback is a neutral acknowledgment only.
+   Stats, knowledge summaries and Socratic follow-up threads are **frozen for
+   the whole session** and only absorb new answers when the user comes back to
+   the app (activity resume) — never in real time while answering.
 2. **Socratic decomposition.** A wrong answer does not trigger an explanation. It
    creates an *unknown* in the knowledge model. Later batches include simpler,
    independently verifiable sub-questions (linked via `parentId` / `rootId`)
@@ -55,8 +59,11 @@ heart of the app.
 ```
 
 - **Queue**: unserved questions. After every answer, if the queue is low the
-  generator runs in the background. Question selection interleaves fresh domains,
-  sub-questions of recently-missed roots, and spaced re-approaches.
+  generator runs in the background. Question selection leaps across the
+  knowledge space (avoids the top-level realms of the last few questions),
+  interleaves sub-questions of lineages missed in *previous* sessions only
+  (so a follow-up can never betray how the question just answered went), and
+  spaced re-approaches.
 - **Context budgeting** (keeps LLM calls small as history grows):
   - last ~40 answers verbatim,
   - a *sampled* set of unknown lineages (recent + random older, with their
@@ -66,13 +73,25 @@ heart of the app.
   - **rolling knowledge summaries**: every N answers the LLM condenses each
     top-level domain's history into a ≤120-word state summary that replaces raw
     old history in future contexts,
-  - a frontier list (rarely/never touched domains) to force exploration.
+  - **serendipity frontiers** (see below): distant exploration targets plus
+    deliberate revisits.
 - **MCP**: the user pastes an MCP servers JSON (streamable-http servers with
   `url` + `headers`). Seeded default: z.ai `web-search-prime` and `web-reader`
   (API key to be filled in by the user). Only these remote HTTP servers are
   supported on-device; stdio servers in the JSON are ignored.
 - **LLM**: any OpenAI-compatible `/chat/completions` endpoint (base URL, API
   key, model, temperature configurable in Settings).
+- **Serendipity engine** (`data/gen/Serendipity.kt` + `RealmTaxonomy.kt`),
+  inspired by the Serendipity Engine project: a wide curated taxonomy of ~50
+  realms and 250+ subrealms (from Physics to Vexillology) stands in for a
+  vector topic database. Recent answers build a time-decayed familiarity
+  profile (half-life ≈ 2 days) over domain paths; candidates are scored by
+  lexical distance from that profile (shared top realm ≫ shared subrealm ≫
+  word overlap). Each generation context receives 8 **distant frontiers**
+  (maximally unlike anything recent — obscure fields welcome, one per realm)
+  and up to 4 **revisits** (old, weak threads that have aged past a 3-day
+  freshness shadow) — consistently asking far-away questions while
+  occasionally circling back.
 
 ## Project layout
 
@@ -82,6 +101,7 @@ app/src/main/java/com/example/inuit/
   data/        Model.kt QuestionStore.kt SettingsStore.kt Grader.kt StatsCalculator.kt
   data/llm/    Http.kt LlmClient.kt McpClient.kt
   data/gen/    Prompts.kt ContextBuilder.kt QuestionGenerator.kt Validator.kt
+               Serendipity.kt RealmTaxonomy.kt   (distant-frontier planner)
   ui/          MainScreen.kt QuestionCard.kt StatsSections.kt SettingsScreen.kt MainViewModel.kt
   ui/charts/   Charts.kt        (custom Canvas charts — no chart dependency)
   ui/theme/                    (dark-first palette)
@@ -104,6 +124,20 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-22 (3)** — **Blind training + serendipity engine + UI refresh.**
+  The user must never know whether specific answers were right or wrong:
+  the correct/incorrect banner, streak flames and the collapsed-card verdict
+  dot are gone — submitting now shows a neutral "answer woven in"
+  acknowledgment. Stats and knowledge summaries are session-frozen
+  (recomputed only on activity resume) so nothing updates in real time while
+  answering; Socratic follow-up threads are gated to lineages missed in
+  *previous* sessions. New serendipity planner (wide realm taxonomy +
+  time-decayed familiarity profile + lexical distance) feeds 8 distant
+  frontiers and up to 4 revisits into every generation context, and question
+  selection now leaps across top-level realms. Visual refresh: deeper palette,
+  gradient accents, lettered choice buttons, hairline-bordered cards,
+  uppercase metric tiles, theme-driven charts. 20 unit tests (6 new for the
+  serendipity planner).
 - **2026-08-22 (2)** — **Diagnostics infrastructure + thinking-model fix.**
   First real-device generation failed opaquely; root-caused by reproducing the
   exact request: reasoning models (glm-5) spend tokens on internal reasoning
