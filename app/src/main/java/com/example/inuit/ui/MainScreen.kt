@@ -64,11 +64,11 @@ import com.example.inuit.ui.theme.Teal
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenKnowledgeMap: () -> Unit = {}
 ) {
     val question by viewModel.currentQuestion.collectAsStateWithLifecycle()
     val stats by viewModel.stats.collectAsStateWithLifecycle()
-    val summaries by viewModel.knowledgeSummaries.collectAsStateWithLifecycle()
     val genState by viewModel.genState.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val queueSize by viewModel.queueSize.collectAsStateWithLifecycle()
@@ -153,7 +153,6 @@ fun MainScreen(
             item(key = "stats") {
                 StatsPanel(
                     stats = stats,
-                    summaries = summaries,
                     liveQueueSize = queueSize,
                     podcast = podcast,
                     podcastLoading = podcastLoading,
@@ -163,7 +162,8 @@ fun MainScreen(
                     // Retire + regenerate + open (feed resolved on demand).
                     onOpenPodcast = viewModel::onPodcastOpened,
                     onOpenHistoryPodcast = viewModel::onHistoryPodcastOpened,
-                    onOpenSettings = onOpenSettings
+                    onOpenSettings = onOpenSettings,
+                    onOpenKnowledgeMap = onOpenKnowledgeMap
                 )
             }
         }

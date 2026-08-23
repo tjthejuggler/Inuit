@@ -31,7 +31,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.inuit.data.KnowledgeSummary
 import com.example.inuit.data.PodcastRec
 import com.example.inuit.data.StatsCalculator
 import com.example.inuit.ui.charts.BarChart
@@ -52,7 +51,6 @@ import java.util.Locale
 @Composable
 fun StatsPanel(
     stats: StatsCalculator.Snapshot,
-    summaries: List<KnowledgeSummary>,
     liveQueueSize: Int,
     podcast: PodcastRec? = null,
     podcastLoading: Boolean = false,
@@ -61,7 +59,8 @@ fun StatsPanel(
     podcastEnabled: Boolean = true,
     onOpenPodcast: (PodcastRec) -> Unit = {},
     onOpenHistoryPodcast: (PodcastRec) -> Unit = {},
-    onOpenSettings: () -> Unit = {}
+    onOpenSettings: () -> Unit = {},
+    onOpenKnowledgeMap: () -> Unit = {}
 ) {
     OverviewChips(stats, liveQueueSize)
     if (stats.totalAnswers == 0) {
@@ -72,7 +71,7 @@ fun StatsPanel(
         )
         return
     }
-    KnowledgeMapCard(stats)
+    KnowledgeMapCard(stats, onOpenKnowledgeMap)
     ProficiencyCard(stats)
     WeakestStrongestCards(stats)
     DomainTreeCard(stats)
@@ -80,7 +79,6 @@ fun StatsPanel(
     TimeOfDayCard(stats)
     GrowthCard(stats)
     ProfileCard(stats)
-    if (summaries.isNotEmpty()) KnowledgeStateCard(summaries)
     if (podcastEnabled) PodcastCard(
         podcast, podcastLoading, podcastHistory, podcastAppConfigured,
         onOpenPodcast, onOpenHistoryPodcast, onOpenSettings
@@ -163,10 +161,14 @@ private fun EmptyStatsCard() {
 // ── knowledge map (radar) ─────────────────────────────────────────────────
 
 @Composable
-private fun KnowledgeMapCard(stats: StatsCalculator.Snapshot) {
+private fun KnowledgeMapCard(stats: StatsCalculator.Snapshot, onOpen: () -> Unit) {
     val top = stats.topDomains.take(8)
     if (top.isEmpty()) return
-    SectionCard(title = "Knowledge map", subtitle = "top-level realms by proficiency") {
+    SectionCard(
+        title = "Knowledge map",
+        subtitle = "top-level realms by proficiency · tap to explore everything",
+        modifier = Modifier.clickable { onOpen() }
+    ) {
         RadarChart(
             entries = top.map { it.path to it.accuracy },
             modifier = Modifier
@@ -194,6 +196,29 @@ private fun KnowledgeMapCard(stats: StatsCalculator.Snapshot) {
                 Spacer(Modifier.width(10.dp))
                 ProficiencyRing(progress = d.accuracy, sizeDp = 30.dp, stroke = 4.dp)
             }
+        }
+        Spacer(Modifier.height(8.dp))
+        // Whole card is tappable; this row makes the affordance obvious.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Text(
+                "Explore the full landscape",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                Icons.Default.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }
@@ -511,27 +536,10 @@ private fun ProfileCard(stats: StatsCalculator.Snapshot) {
     }
 }
 
-// ── rolling knowledge state (LLM summaries) ───────────────────────────────
-
-@Composable
-private fun KnowledgeStateCard(summaries: List<KnowledgeSummary>) {
-    SectionCard(title = "Knowledge state", subtitle = "rolling summaries of where you stand") {
-        summaries.forEach { s ->
-            Text(
-                s.domain,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                s.text,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(10.dp))
-        }
-    }
-}
+// BLIND-TRAINING NOTE: the LLM-written rolling knowledge-state summaries are
+// deliberately NOT rendered anywhere in the UI. They describe which areas
+// the user got right or wrong and must never reach the user — they exist
+// only as generation context for the question engine.
 
 // ── shared card shell ─────────────────────────────────────────────────────
 

@@ -189,9 +189,9 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
                 computeSnapshot()
             )
 
-    val knowledgeSummaries = statsEpoch
-        .map { store.snapshotSummaries() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), store.snapshotSummaries())
+    // NOTE: the LLM-written knowledge-state summaries (store.snapshotSummaries)
+    // are generation context ONLY — they can reveal which questions the user
+    // got right or wrong, so they must never be exposed to the UI.
 
     /** Live queue depth — operational info only, safe to update in real time. */
     val queueSize: StateFlow<Int> = store.dataVersion

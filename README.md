@@ -18,9 +18,12 @@ heart of the app.
    correct answer is stored (needed for grading and for the generator), but no
    UI path may ever display it. The user must not know whether any specific
    answer was right or wrong: feedback is a neutral acknowledgment only.
-   Stats, knowledge summaries and Socratic follow-up threads are **frozen for
-   the whole session** and only absorb new answers when the user comes back to
-   the app (activity resume) — never in real time while answering.
+   Stats and Socratic follow-up threads are **frozen for the whole session**
+   and only absorb new answers when the user comes back to the app (activity
+   resume) — never in real time while answering. The LLM-written rolling
+   knowledge summaries can describe which answers were right or wrong, so
+   they are internal generation context only and must never be rendered in
+   any UI.
 2. **Socratic decomposition.** A wrong answer does not trigger an explanation. It
    creates an *unknown* in the knowledge model. Later batches include simpler,
    independently verifiable sub-questions (linked via `parentId` / `rootId`)
@@ -41,7 +44,12 @@ heart of the app.
    living map of the user's knowledge: radar of top-level realms, proficiency
    bars, weakest/strongest areas, an expandable domain tree that *grows in
    complexity* as more questions are answered, activity and accuracy trends, and
-   knowledge-space growth over time.
+   knowledge-space growth over time. The knowledge map card opens a
+   full-screen, landscape-locked **interactive knowledge map**: the entire
+   realm taxonomy laid out as an explorable galaxy (sections spiral outward,
+   realms cluster around them, territories orbit each realm), pan/zoom/tap
+   with a drill-down side panel, frozen proficiency overlaid, charted /
+   uncharted filtering.
 
 ## How it works
 
@@ -137,6 +145,36 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-23 (11)** — **Interactive knowledge map + summaries sealed.** The
+  "Knowledge state" card (rolling LLM summaries) is gone from the stats
+  panel — those summaries can tell the user which questions they got right
+  or wrong, so they are now strictly internal generation context (the
+  ViewModel no longer even exposes them to the UI). The knowledge map card
+  is now tappable ("Explore the full landscape ›") and opens a full-screen,
+  **landscape-forced interactive knowledge map** — the stats radar evolved
+  into an explorable galaxy of the *entire* realm taxonomy: sections spiral
+  outward on a golden-angle sunflower (deterministic, evenly spaced), realms
+  cluster around their section (growing with answer volume, colored by
+  frozen proficiency), and every territory (subgroup) orbits its realm as a
+  dot; uncharted land stays dim, LLM frontier paths get their own "Frontiers"
+  cluster. Interactions: one-finger pan, pinch zoom, double-tap zoom-in,
+  +/−/fit buttons, and tap-to-inspect any node — a drill-down side panel
+  shows section → realm → territory detail (rings, proficiency bars,
+  charted/uncharted territories) with tappable rows and breadcrumbs.
+  Decluttered by design: the map OPENS zoomed in on the user's
+  most-answered charted realm (never a wall of text), and labels follow
+  strict level-of-detail rules with screen-space collision avoidance —
+  section names appear from zoom 0.30, realm names from 0.75, territory
+  names from 1.8, and any label that would overlap an already-placed one
+  simply isn't drawn (the selected node's label always wins space first),
+  so zooming out makes text disappear instead of piling up. ⤢ is the
+  explicit fit-all overview.
+  Charted/Uncharted filter chips re-shape the map; a legend explains the
+  color coding. The screen locks to sensor-landscape while open and restores
+  the previous orientation on exit (activity handles orientation
+  configChanges itself, so the lock never recreates it). Layout and merge
+  logic are pure Kotlin in `ui/KnowledgeLandscape.kt`, unit-tested.
+  90 unit tests (4 new).
 - **2026-08-23 (10)** — **Occasional accents (location / date / cross-net).**
   Each net — including the All net, which gained an edit button in
   Settings → Nets (its dialog hides the fixed name/scope and offers

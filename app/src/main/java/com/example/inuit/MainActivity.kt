@@ -19,6 +19,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.runtime.DisposableEffect
 import androidx.core.content.ContextCompat
+import com.example.inuit.ui.KnowledgeMapScreen
 import com.example.inuit.ui.MainScreen
 import com.example.inuit.ui.MainViewModel
 import com.example.inuit.ui.SettingsScreen
@@ -75,7 +76,14 @@ private fun InuitNavHost(graph: AppGraph) {
 
     NavHost(navController = nav, startDestination = "main") {
         composable("main") {
-            MainScreen(viewModel = viewModel, onOpenSettings = { nav.navigate("settings") })
+            MainScreen(
+                viewModel = viewModel,
+                onOpenSettings = { nav.navigate("settings") },
+                onOpenKnowledgeMap = { nav.navigate("knowledge-map") }
+            )
+        }
+        composable("knowledge-map") {
+            KnowledgeMapScreen(viewModel = viewModel, onBack = { nav.popBackStack() })
         }
         composable("settings") {
             SettingsScreen(viewModel = viewModel, onBack = { nav.popBackStack() })
