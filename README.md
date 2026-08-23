@@ -59,11 +59,16 @@ heart of the app.
 ```
 
 - **Queue**: unserved questions. After every answer, if the queue is low the
-  generator runs in the background. Question selection leaps across the
-  knowledge space (avoids the top-level realms of the last few questions),
-  interleaves sub-questions of lineages missed in *previous* sessions only
-  (so a follow-up can never betray how the question just answered went), and
-  spaced re-approaches.
+  generator runs in the background. Question selection (`data/QuestionSelector.kt`)
+  leaps across the knowledge space (avoids the top-level realms of the last few
+  questions), interleaves sub-questions of lineages missed in *previous*
+  sessions only (so a follow-up can never betray how the question just answered
+  went; choice-format sub-questions are preferred — recognition scaffolds
+  recall), and **spaced revisits**: previously answered questions return with
+  ~20% probability — wrong answers weighted 4× over correct ones, never within
+  6 answers of their last serving, never the question on screen. The
+  wrong/correct mix is what keeps a re-ask from revealing correctness. When the
+  queue runs dry mid-session, a revisit fills the gap while a batch generates.
 - **Context budgeting** (keeps LLM calls small as history grows):
   - last ~40 answers verbatim,
   - a *sampled* set of unknown lineages (recent + random older, with their
@@ -99,6 +104,7 @@ heart of the app.
 app/src/main/java/com/example/inuit/
   InuitApp.kt, AppGraph.kt, MainActivity.kt
   data/        Model.kt QuestionStore.kt SettingsStore.kt Grader.kt StatsCalculator.kt
+               QuestionSelector.kt   (pick strategy: threads, spaced revisits, diversity)
   data/llm/    Http.kt LlmClient.kt McpClient.kt
   data/gen/    Prompts.kt ContextBuilder.kt QuestionGenerator.kt Validator.kt
                Serendipity.kt RealmTaxonomy.kt   (distant-frontier planner)
@@ -116,7 +122,8 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
   stratified random sampling for context assembly.
 - Item-Response-Theory difficulty calibration per domain (replace LLM-guessed
   difficulty with empirically fitted curves as data accumulates).
-- True spaced-repetition scheduling for re-approaching unknown roots.
+- True spaced-repetition scheduling (SM-2-style per-question intervals) beyond
+  the current lightweight wrong-weighted revisit heuristic.
 - Per-domain summary quality checks; hierarchical summaries at depth 2+.
 - Provider-native structured outputs / JSON schema enforcement when available.
 - Export/import of the knowledge store; multi-profile support.
@@ -124,6 +131,17 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-22 (4)** — **Instant flow + spaced revisits.** Submitting an answer
+  now advances to the next question immediately — the neutral acknowledgment
+  panel and "Next question" button are gone (a stale double-tap on the old
+  answer button is ignored via a question-id guard). New pure selection
+  strategy (`data/QuestionSelector.kt`, unit-tested): Socratic threads surface
+  at 50% when available (still gated to prior-session misses; multiple-choice /
+  true-false sub-questions preferred per the new generator prompt rule), and
+  previously answered questions come back as spaced revisits — wrong answers
+  weighted 4×, correct ones 1×, minimum gap of 6 answers, current question
+  excluded, empty-queue fallback so the user is never idle mid-generation.
+  27 unit tests (7 new).
 - **2026-08-22 (3)** — **Blind training + serendipity engine + UI refresh.**
   The user must never know whether specific answers were right or wrong:
   the correct/incorrect banner, streak flames and the collapsed-card verdict

@@ -8,6 +8,7 @@ import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
 import com.example.inuit.data.Grader
 import com.example.inuit.data.Question
+import com.example.inuit.data.QuestionSelector
 import com.example.inuit.data.StatsCalculator
 import com.example.inuit.data.llm.LlmConfig
 import com.example.inuit.data.llm.McpClient
@@ -40,18 +41,10 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     /** Ticks only on session start / app resume — drives stats recomputation. */
     private val statsEpoch = MutableStateFlow(0L)
 
-    // ── current question & feedback ──────────────────────────────────────
+    // ── current question ─────────────────────────────────────────────────
 
     private val _currentQuestion = MutableStateFlow<Question?>(null)
     val currentQuestion: StateFlow<Question?> = _currentQuestion.asStateFlow()
-
-    /** Neutral acknowledgment — carries NO correctness information. */
-    sealed interface Feedback {
-        data object Recorded : Feedback
-    }
-
-    private val _feedback = MutableStateFlow<Feedback?>(null)
-    val feedback: StateFlow<Feedback?> = _feedback.asStateFlow()
 
     /** Shown when the question card is collapsed. */
     private val _questionCollapsed = MutableStateFlow(false)
@@ -82,61 +75,35 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     /**
-     * Selection strategy: sometimes surface a sub-question of a lineage
-     * missed in a PREVIOUS session (Socratic thread — gating on the session
-     * boundary so a follow-up can never betray how the question just
-     * answered went); otherwise a fresh question chosen for maximal realm
-     * distance from the last few questions, with a skip penalty.
+     * Selection strategy lives in [QuestionSelector]: Socratic threads from
+     * prior-session misses, spaced wrong-weighted revisits of old questions,
+     * then fresh realm-diverse picks. The verdict of the just-recorded
+     * answer can never influence this pick (blind-training invariant).
      */
     fun pickNext() {
-        val queue = store.queue()
-        if (queue.isEmpty()) {
-            _currentQuestion.value = null
-            _feedback.value = null
-            return
-        }
-        val current = _currentQuestion.value
-        val candidates = queue.filter { it.id != current?.id }.ifEmpty { queue }
-
-        // Only lineages missed BEFORE this session started may spawn threads.
-        val priorWrongRoots = store.snapshotAnswers()
-            .filter { it.timestamp < sessionBoundaryMs }
-            .takeLast(40)
-            .filter { !it.correct }
-            .mapNotNull { a -> store.questionById(a.questionId)?.let { q -> q.rootId ?: q.id } }
-            .toSet()
-        val subQuestions = candidates.filter {
-            it.rootId != null && it.id != it.rootId && it.rootId in priorWrongRoots
-        }
-
-        // Realm-distance pressure: avoid the top-level realms of the last
-        // few questions so consecutive questions leap across the space.
-        val recentRealms = store.snapshotAnswers()
-            .takeLast(REALM_MEMORY)
-            .mapNotNull { a -> store.questionById(a.questionId)?.domains?.firstOrNull()?.substringBefore(" > ") }
-            .toSet()
-
-        val pick = if (subQuestions.isNotEmpty() && rng.nextInt(100) < 35) {
-            subQuestions.random(rng)
-        } else {
-            val diverse = candidates.filter { q ->
-                q.domains.firstOrNull()?.substringBefore(" > ") !in recentRealms
-            }.ifEmpty { candidates }
-            val fresh = diverse.filter { it.skipCount == 0 }.ifEmpty { diverse }
-            fresh.random(rng)
-        }
-        _currentQuestion.value = pick
-        _feedback.value = null
+        _currentQuestion.value = QuestionSelector.select(
+            store.snapshotQuestions(),
+            store.snapshotAnswers(),
+            _currentQuestion.value?.id,
+            sessionBoundaryMs,
+            rng
+        )
     }
 
-    /** Grades locally (verdict never reaches the UI), records, refills queue. */
-    fun submitAnswer(raw: String, elapsedMs: Long) {
+    /**
+     * Grades locally (verdict never reaches the UI), records, refills the
+     * queue and IMMEDIATELY advances to the next question — no acknowledgment
+     * screen, no extra tap. The [questionId] guard makes the instant advance
+     * safe: a stale double-tap on the old answer button is ignored instead of
+     * grading the already-replaced current question.
+     */
+    fun submitAnswer(questionId: String, raw: String, elapsedMs: Long) {
         val q = _currentQuestion.value ?: return
-        if (_feedback.value != null) return
+        if (q.id != questionId) return
         val correct = Grader.grade(q, raw)
         store.recordAnswer(q.id, correct, raw, elapsedMs)
-        _feedback.value = Feedback.Recorded
         graph.generator.maybeGenerate()
+        pickNext()
     }
 
     fun skip() {
@@ -273,9 +240,6 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     companion object {
-        /** How many recent answers define the "recent realms" to leap away from. */
-        private const val REALM_MEMORY = 6
-
         fun factory(graph: AppGraph): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = MainViewModel(graph) as T

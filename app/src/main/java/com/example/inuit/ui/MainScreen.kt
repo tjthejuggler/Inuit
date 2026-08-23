@@ -55,7 +55,6 @@ fun MainScreen(
     onOpenSettings: () -> Unit
 ) {
     val question by viewModel.currentQuestion.collectAsStateWithLifecycle()
-    val feedback by viewModel.feedback.collectAsStateWithLifecycle()
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val summaries by viewModel.knowledgeSummaries.collectAsStateWithLifecycle()
     val genState by viewModel.genState.collectAsStateWithLifecycle()
@@ -121,11 +120,7 @@ fun MainScreen(
                         Column {
                             QuestionCard(
                                 question = q,
-                                feedback = feedback,
                                 onSubmit = viewModel::submitAnswer,
-                                onNext = {
-                                    viewModel.pickNext()
-                                },
                                 onSkip = viewModel::skip
                             )
                             Spacer(Modifier.height(4.dp))

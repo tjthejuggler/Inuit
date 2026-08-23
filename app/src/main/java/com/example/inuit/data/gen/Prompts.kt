@@ -21,6 +21,7 @@ ABSOLUTE RULES:
    - Never re-ask the target question itself, and never give away its answer.
    - Ladder from easier to closer: start from a baseline fact most people know, step closer to the target across successive batches (you will see which sub-questions were answered).
    - Vary the angle across batches (magnitude, comparison, ordering, unit, definition, cause, timeline).
+   - Prefer multiple_choice and true_false formats for sub-questions — recognition scaffolds recall; save numeric/fill_blank for the target itself.
    - Set "parent_hint" to the [U#] marker of the target you are decomposing.
 4. VARIETY — mix all four types (true_false, multiple_choice, numeric, fill_blank). Mix difficulties 1-5 (1 = most people know; 5 = expert). Include famous trivia AND delightfully obscure but rock-solid facts (statistics, magnitudes, records, etymology). At least half the batch must open subdomains never present in the context — breadth of the knowledge space matters more than depth.
 5. DOMAIN TAGS — tag every question with 1-3 hierarchical paths using " > " separators (e.g. "Science > Physics > Optics"). Reuse existing paths from the context when they fit; create deeper/more specific paths when the question is narrower. Top level must be one of the broad realms seen in context or an equally broad new one.

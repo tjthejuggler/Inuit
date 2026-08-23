@@ -1,9 +1,6 @@
 package com.example.inuit.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,22 +53,20 @@ import kotlin.random.Random
 /**
  * The question card. CRITICAL INVARIANTS:
  *  - never render the question's stored answer,
- *  - never signal whether an answer was correct or wrong — the acknowledgment
- *    panel is deliberately neutral (blind training). The app is Socratic
- *    by design; correctness only ever surfaces as aggregate, session-frozen
- *    statistics that refresh when the user returns to the app.
+ *  - never signal whether an answer was correct or wrong (blind training).
+ *    Submitting advances to the next question IMMEDIATELY — no correctness
+ *    acknowledgment, no "next" tap. Correctness only ever surfaces as
+ *    aggregate, session-frozen statistics that refresh when the user
+ *    returns to the app.
  */
 @Composable
 fun QuestionCard(
     question: Question,
-    feedback: MainViewModel.Feedback?,
-    onSubmit: (raw: String, elapsedMs: Long) -> Unit,
-    onNext: () -> Unit,
+    onSubmit: (questionId: String, raw: String, elapsedMs: Long) -> Unit,
     onSkip: () -> Unit
 ) {
     val startedAt = remember(question.id) { System.nanoTime() }
     var input by remember(question.id) { mutableStateOf("") }
-    val answered = feedback != null
 
     Card(
         modifier = Modifier
@@ -122,11 +117,11 @@ fun QuestionCard(
             when (question.type) {
                 QuestionType.TRUE_FALSE -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        BigChoiceButton("True", enabled = !answered, modifier = Modifier.weight(1f)) {
-                            onSubmit("true", elapsedMs(startedAt))
+                        BigChoiceButton("True", modifier = Modifier.weight(1f)) {
+                            onSubmit(question.id, "true", elapsedMs(startedAt))
                         }
-                        BigChoiceButton("False", enabled = !answered, modifier = Modifier.weight(1f)) {
-                            onSubmit("false", elapsedMs(startedAt))
+                        BigChoiceButton("False", modifier = Modifier.weight(1f)) {
+                            onSubmit(question.id, "false", elapsedMs(startedAt))
                         }
                     }
                 }
@@ -140,10 +135,9 @@ fun QuestionCard(
                             ChoiceButton(
                                 text = question.choices[idx],
                                 letter = ('A' + position),
-                                enabled = !answered,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                onSubmit(idx.toString(), elapsedMs(startedAt))
+                                onSubmit(question.id, idx.toString(), elapsedMs(startedAt))
                             }
                         }
                     }
@@ -154,7 +148,6 @@ fun QuestionCard(
                         OutlinedTextField(
                             value = input,
                             onValueChange = { input = it },
-                            enabled = !answered,
                             singleLine = true,
                             label = { Text("Your answer") },
                             suffix = question.unit?.let { { Text(it, style = MaterialTheme.typography.bodySmall) } },
@@ -164,8 +157,8 @@ fun QuestionCard(
                         )
                         Spacer(Modifier.width(10.dp))
                         Button(
-                            onClick = { onSubmit(input, elapsedMs(startedAt)) },
-                            enabled = !answered && input.isNotBlank(),
+                            onClick = { onSubmit(question.id, input, elapsedMs(startedAt)) },
+                            enabled = input.isNotBlank(),
                             shape = RoundedCornerShape(14.dp)
                         ) { Text("Submit") }
                     }
@@ -176,7 +169,6 @@ fun QuestionCard(
                         OutlinedTextField(
                             value = input,
                             onValueChange = { input = it },
-                            enabled = !answered,
                             singleLine = true,
                             label = { Text("Your answer") },
                             shape = RoundedCornerShape(14.dp),
@@ -184,64 +176,17 @@ fun QuestionCard(
                         )
                         Spacer(Modifier.width(10.dp))
                         Button(
-                            onClick = { onSubmit(input, elapsedMs(startedAt)) },
-                            enabled = !answered && input.isNotBlank(),
+                            onClick = { onSubmit(question.id, input, elapsedMs(startedAt)) },
+                            enabled = input.isNotBlank(),
                             shape = RoundedCornerShape(14.dp)
                         ) { Text("Submit") }
                     }
                 }
             }
 
-            // ── neutral acknowledgment (NEVER correctness, NEVER the answer) ──
-            AnimatedVisibility(visible = answered, enter = fadeIn(), exit = fadeOut()) {
-                Column {
-                    Spacer(Modifier.height(16.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f))
-                            .padding(horizontal = 14.dp, vertical = 12.dp)
-                    ) {
-                        Box(
-                            Modifier
-                                .size(9.dp)
-                                .clip(CircleShape)
-                                .background(Brush.sweepGradient(listOf(Indigo, Teal, Indigo)))
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            "Answer woven in — the pattern will emerge in time.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            onClick = onNext,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Text("Next question")
-                        }
-                        OutlinedButton(
-                            onClick = onSkip,
-                            enabled = false,
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Text("Skip")
-                        }
-                    }
-                }
-            }
-
-            if (!answered) {
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.End) {
-                    OutlinedButton(onClick = onSkip, shape = RoundedCornerShape(14.dp)) { Text("Skip") }
-                }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.End) {
+                OutlinedButton(onClick = onSkip, shape = RoundedCornerShape(14.dp)) { Text("Skip") }
             }
         }
     }
@@ -303,13 +248,11 @@ private fun DifficultyMeter(difficulty: Int) {
 @Composable
 private fun BigChoiceButton(
     text: String,
-    enabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Button(
         onClick = onClick,
-        enabled = enabled,
         modifier = modifier.height(54.dp),
         shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(
@@ -325,13 +268,11 @@ private fun BigChoiceButton(
 private fun ChoiceButton(
     text: String,
     letter: Char,
-    enabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     OutlinedButton(
         onClick = onClick,
-        enabled = enabled,
         modifier = modifier.height(50.dp),
         shape = RoundedCornerShape(14.dp)
     ) {
