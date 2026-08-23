@@ -56,8 +56,10 @@ object StatsCalculator {
         val totalAnswers: Int,
         val totalCorrect: Int,
         val accuracy: Float,
-        val streak: Int,
-        val bestStreak: Int,
+        /** Consecutive calendar days with ≥1 answer, ending today (or yesterday
+         *  when today has no answers yet — the streak survives until the user
+         *  answers again today). */
+        val dayStreak: Int,
         val domainsExplored: Int,
         val distinctDomains: Int,
         val queueSize: Int,
@@ -94,21 +96,22 @@ object StatsCalculator {
         val total = answers.size
         val correctTotal = answers.count { it.correct }
 
-        // streaks (chronological)
-        var streak = 0
-        for (a in answers.asReversed()) {
-            if (a.correct) streak++ else break
-        }
-        var best = 0
-        var run = 0
-        for (a in answers) {
-            run = if (a.correct) run + 1 else 0
-            if (run > best) best = run
-        }
-
         // per-day activity (last 14 days, gaps filled)
         val zone = ZoneId.systemDefault()
         val today = LocalDate.now(zone)
+
+        // day-streak of usage: consecutive calendar days with at least one
+        // answer, anchored at today — or yesterday when today has none yet.
+        val activeDays = HashSet<LocalDate>()
+        for (a in answers) {
+            activeDays.add(Instant.ofEpochMilli(a.timestamp).atZone(zone).toLocalDate())
+        }
+        var dayStreak = 0
+        var cursor = if (today in activeDays) today else today.minusDays(1)
+        while (cursor in activeDays) {
+            dayStreak++
+            cursor = cursor.minusDays(1)
+        }
         val dayBuckets = LinkedHashMap<LocalDate, IntArray>() // [count, correct]
         for (i in 13 downTo 0) dayBuckets[today.minusDays(i.toLong())] = IntArray(2)
         for (a in answers) {
@@ -210,8 +213,7 @@ object StatsCalculator {
             totalAnswers = total,
             totalCorrect = correctTotal,
             accuracy = if (total == 0) 0f else correctTotal.toFloat() / total,
-            streak = streak,
-            bestStreak = best,
+            dayStreak = dayStreak,
             domainsExplored = topAgg.size,
             distinctDomains = domainStats.map { it.path }.distinct().size,
             queueSize = queueSize,

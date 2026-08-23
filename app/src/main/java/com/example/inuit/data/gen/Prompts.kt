@@ -234,6 +234,82 @@ The app's question stockpile is low ($queued queued). Search the web for large t
 Prioritize breadth and volume. Every question must be answerable from what you actually read.
 """.trim()
 
+    // ── Podcast episode recommendation ────────────────────────────────────
+
+    fun podcastPrompt(
+        weakLines: List<String>,
+        wrongLines: List<String>,
+        summaryLines: List<String>,
+        avoidLines: List<String>,
+        toolsAvailable: Boolean = false
+    ): String = buildString {
+        append("""
+You pick podcast episodes for Inuit, an intuition-training app. Below is what the user knows least. Recommend ONE specific, REAL podcast EPISODE that would best teach one of those weak areas.
+
+RULES:
+1. REAL ABOVE ALL — only pick an episode you are CERTAIN exists: a famous evergreen episode of a well-known show (e.g. In Our Time, Hardcore History, This American Life, Radiolab, 99% Invisible, The Rest Is History, Ologies, Stuff You Should Know). NEVER invent an episode title. When unsure of the exact title, pick a different episode you are sure of.
+2. TARGET THE GAP — the episode's subject must overlap the user's weakest area (or a topic they recently missed). Depth on their single biggest gap beats breadth.
+3. ACCESSIBLE — prefer episodes that assume no prior knowledge of the subject.
+4. search_query — "show name + episode title", optimized for searching inside a podcast app.
+5. url — REQUIRED in practice: the app opens the episode FROM this link, so a missing link degrades the experience. Provide the episode's stable public page — the Apple Podcasts episode page (https://podcasts.apple.com/<locale>/podcast/<show-slug>/id<show-id>?i=<episode-id>) or the show's official episode page. IF WEB TOOLS ARE PROVIDED, use them to find/verify the exact page before answering. Never invent or guess a URL — set url to null only as a last resort.
+6. VARIETY, NOT BANS — your guiding principle is always the RIGHT episode for the user's gap. Given comparable candidates, prefer a show NOT listed under ALREADY SUGGESTED and roam widely across shows, hosts, formats and tones — but a clearly better-fitting episode from a recent show still beats a weaker pick from a new one.
+
+Reply with a single JSON object, no markdown fences, no commentary:
+{"show": "...", "title": "...", "reason": "one sentence tying the episode to the user's weak area", "search_query": "...", "url": "..." or null}
+""".trimIndent())
+        if (toolsAvailable) {
+            append(
+                "\nWEB TOOLS: you may call the provided web search / web reader tools " +
+                    "(at most a couple of calls) to find the episode's Apple Podcasts page or " +
+                    "official episode URL, and to sanity-check that the episode exists. " +
+                    "Prefer grounded URLs over memory.\n"
+            )
+        }
+        append("\n\n== WEAKEST AREAS (domain — correct/attempts) ==\n")
+        if (weakLines.isEmpty()) append("(no data yet — pick a famous, broadly enlightening episode)\n")
+        else weakLines.forEach { append("- ").append(it).append('\n') }
+        if (wrongLines.isNotEmpty()) {
+            append("\n== RECENTLY MISSED QUESTIONS ==\n")
+            wrongLines.forEach { append("- ").append(it).append('\n') }
+        }
+        if (summaryLines.isNotEmpty()) {
+            append("\n== KNOWLEDGE SUMMARIES ==\n")
+            summaryLines.forEach { append("- ").append(it).append('\n') }
+        }
+        if (avoidLines.isNotEmpty()) {
+            append("\n== ALREADY SUGGESTED (prefer different shows) ==\n")
+            avoidLines.forEach { append("- ").append(it).append('\n') }
+        }
+    }
+
+    /** Corrective second pass when the first reply lacked a usable URL. */
+    fun podcastUrlRetryPrompt(show: String, title: String): String = """
+You previously picked the podcast episode "$title" from "$show" for the Inuit app, but the reply lacked a usable episode URL. The app opens the episode FROM that link, so it matters.
+
+Reply again with the SAME JSON object format: {"show": "...", "title": "...", "reason": "...", "search_query": "...", "url": "..."} — this time with the episode's real, stable public page: the Apple Podcasts episode page (https://podcasts.apple.com/<locale>/podcast/<show-slug>/id<show-id>?i=<episode-id>) or the show's official episode page. Verify the format character by character; never fabricate a URL. If you genuinely cannot recall one, return "url": null.
+""".trim()
+
+    /** Only absolute http(s) URLs with a real host are usable links. */
+    private val HTTP_URL = Regex("^https?://[^\\s/?#]+\\.[^\\s/?#]+", RegexOption.IGNORE_CASE)
+
+    fun parsePodcastRec(json: String): com.example.inuit.data.PodcastRec? {
+        return try {
+            val o = JSONObject(extractJson(json))
+            val show = o.optString("show").trim()
+            val title = o.optString("title").trim()
+            if (show.isEmpty() || title.isEmpty()) null
+            else com.example.inuit.data.PodcastRec(
+                show = show,
+                title = title,
+                reason = o.optString("reason").trim().ifEmpty { "Targets one of your weakest areas." },
+                searchQuery = o.optString("search_query").trim().ifEmpty { "$show $title" },
+                url = o.optString("url").trim().takeIf { it.isNotBlank() && HTTP_URL.containsMatchIn(it) }
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     // ── Robust JSON extraction ───────────────────────────────────────────
 
     /** Strips markdown fences and finds the first balanced JSON object in the text. */

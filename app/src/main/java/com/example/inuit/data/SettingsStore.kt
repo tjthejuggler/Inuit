@@ -50,7 +50,9 @@ data class AppSettings(
     val harvestEnabled: Boolean = true,
     val mcpJson: String = DEFAULT_MCP_JSON,
     /** Total answer count already covered by rolling summaries. */
-    val summarizedAnswers: Int = 0
+    val summarizedAnswers: Int = 0,
+    /** Package of the podcast app that opens recommendations; blank = system default. */
+    val podcastAppPackage: String = ""
 ) {
     val llmConfigured: Boolean get() = baseUrl.isNotBlank() && model.isNotBlank()
 }
@@ -71,6 +73,7 @@ class SettingsStore(private val context: Context) {
         val HARVEST = booleanPreferencesKey("gen_harvest")
         val MCP_JSON = stringPreferencesKey("mcp_json")
         val SUMMARIZED = intPreferencesKey("summarized_answers")
+        val PODCAST_APP = stringPreferencesKey("podcast_app_package")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -87,7 +90,8 @@ class SettingsStore(private val context: Context) {
             mcpBudget = (p[K.MCP_BUDGET] ?: 3).coerceIn(0, 20),
             harvestEnabled = p[K.HARVEST] ?: true,
             mcpJson = p[K.MCP_JSON] ?: DEFAULT_MCP_JSON,
-            summarizedAnswers = p[K.SUMMARIZED] ?: 0
+            summarizedAnswers = p[K.SUMMARIZED] ?: 0,
+            podcastAppPackage = p[K.PODCAST_APP] ?: ""
         )
     }
 
@@ -130,5 +134,9 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setSummarizedAnswers(count: Int) {
         context.dataStore.edit { it[K.SUMMARIZED] = count }
+    }
+
+    suspend fun setPodcastApp(pkg: String) {
+        context.dataStore.edit { it[K.PODCAST_APP] = pkg.trim() }
     }
 }

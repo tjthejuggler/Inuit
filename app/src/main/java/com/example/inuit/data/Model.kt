@@ -156,6 +156,52 @@ data class KnowledgeSummary(
     val coveredAnswers: Int
 )
 
+/**
+ * One LLM-chosen podcast episode targeting the user's weakest knowledge
+ * areas. Shown at the bottom of the stats panel; tapping it opens the
+ * episode in the user's podcast app and retires the recommendation.
+ */
+data class PodcastRec(
+    /** Podcast show name, e.g. "In Our Time". */
+    val show: String,
+    /** Specific episode title. */
+    val title: String,
+    /** One sentence tying the episode to the user's weak area. */
+    val reason: String,
+    /** "show + episode" optimized for in-app podcast search. */
+    val searchQuery: String,
+    /** Stable public page (Apple Podcasts / official episode page); null → search instead. */
+    val url: String? = null,
+    /** RSS feed of the show — the universal identifier every podcast app can subscribe to. */
+    val feedUrl: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val clickedAt: Long? = null
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("show", show)
+        put("title", title)
+        put("reason", reason)
+        put("q", searchQuery)
+        url?.let { put("url", it) }
+        feedUrl?.let { put("feed", it) }
+        put("ts", createdAt)
+        clickedAt?.let { put("clicked", it) }
+    }
+
+    companion object {
+        fun fromJson(o: JSONObject): PodcastRec = PodcastRec(
+            show = o.optString("show"),
+            title = o.optString("title"),
+            reason = o.optString("reason"),
+            searchQuery = o.optString("q"),
+            url = o.optString("url").ifBlank { null },
+            feedUrl = o.optString("feed").ifBlank { null },
+            createdAt = o.optLong("ts", System.currentTimeMillis()),
+            clickedAt = if (o.has("clicked") && !o.isNull("clicked")) o.optLong("clicked") else null
+        )
+    }
+}
+
 /** Extract JSON array of strings, tolerating missing arrays. */
 internal fun org.json.JSONArray?.toStringList(): List<String> {
     if (this == null) return emptyList()

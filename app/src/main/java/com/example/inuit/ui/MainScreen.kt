@@ -61,6 +61,9 @@ fun MainScreen(
     val collapsed by viewModel.questionCollapsed.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val queueSize by viewModel.queueSize.collectAsStateWithLifecycle()
+    val podcast by viewModel.podcast.collectAsStateWithLifecycle()
+    val podcastLoading by viewModel.podcastLoading.collectAsStateWithLifecycle()
+    val podcastHistory by viewModel.podcastHistory.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -145,7 +148,19 @@ fun MainScreen(
             }
 
             item(key = "stats") {
-                StatsPanel(stats = stats, summaries = summaries, liveQueueSize = queueSize)
+                StatsPanel(
+                    stats = stats,
+                    summaries = summaries,
+                    liveQueueSize = queueSize,
+                    podcast = podcast,
+                    podcastLoading = podcastLoading,
+                    podcastHistory = podcastHistory,
+                    podcastAppConfigured = settings.podcastAppPackage.isNotBlank(),
+                    // Retire + regenerate + open (feed resolved on demand).
+                    onOpenPodcast = viewModel::onPodcastOpened,
+                    onOpenHistoryPodcast = viewModel::onHistoryPodcastOpened,
+                    onOpenSettings = onOpenSettings
+                )
             }
         }
     }

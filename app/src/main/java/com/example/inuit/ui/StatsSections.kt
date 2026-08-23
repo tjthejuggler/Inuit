@@ -3,7 +3,6 @@ package com.example.inuit.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -34,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.inuit.data.KnowledgeSummary
+import com.example.inuit.data.PodcastRec
 import com.example.inuit.data.StatsCalculator
 import com.example.inuit.ui.charts.BarChart
 import com.example.inuit.ui.charts.LineChart
@@ -54,11 +53,22 @@ import java.util.Locale
 fun StatsPanel(
     stats: StatsCalculator.Snapshot,
     summaries: List<KnowledgeSummary>,
-    liveQueueSize: Int
+    liveQueueSize: Int,
+    podcast: PodcastRec? = null,
+    podcastLoading: Boolean = false,
+    podcastHistory: List<PodcastRec> = emptyList(),
+    podcastAppConfigured: Boolean = true,
+    onOpenPodcast: (PodcastRec) -> Unit = {},
+    onOpenHistoryPodcast: (PodcastRec) -> Unit = {},
+    onOpenSettings: () -> Unit = {}
 ) {
     OverviewChips(stats, liveQueueSize)
     if (stats.totalAnswers == 0) {
         EmptyStatsCard()
+        PodcastCard(
+            podcast, podcastLoading, podcastHistory, podcastAppConfigured,
+            onOpenPodcast, onOpenHistoryPodcast, onOpenSettings
+        )
         return
     }
     KnowledgeMapCard(stats)
@@ -70,26 +80,30 @@ fun StatsPanel(
     GrowthCard(stats)
     ProfileCard(stats)
     if (summaries.isNotEmpty()) KnowledgeStateCard(summaries)
+    PodcastCard(
+        podcast, podcastLoading, podcastHistory, podcastAppConfigured,
+        onOpenPodcast, onOpenHistoryPodcast, onOpenSettings
+    )
 }
 
-// ── overview chips ────────────────────────────────────────────────────────
+// ── overview metrics (compact fixed grid — everything visible, no scroll) ──
 
 @Composable
 private fun OverviewChips(stats: StatsCalculator.Snapshot, liveQueueSize: Int) {
     Column {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            StatChip("Answered", "${stats.totalAnswers}")
-            StatChip("Accuracy", "${(stats.accuracy * 100).toInt()}%")
-            StatChip("Streak", "${stats.streak}", highlight = stats.streak >= 3)
-            StatChip("Best", "${stats.bestStreak}")
-            StatChip("Realms", "${stats.domainsExplored}")
-            StatChip("Topics", "${stats.distinctDomains}")
-            StatChip("Queue", "$liveQueueSize")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            StatChip("Answered", "${stats.totalAnswers}", Modifier.weight(1f))
+            StatChip("Accuracy", "${(stats.accuracy * 100).toInt()}%", Modifier.weight(1f))
+            StatChip(
+                "Day streak", "${stats.dayStreak}", Modifier.weight(1f),
+                highlight = stats.dayStreak >= 3
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            StatChip("Realms", "${stats.domainsExplored}", Modifier.weight(1f))
+            StatChip("Topics", "${stats.distinctDomains}", Modifier.weight(1f))
+            StatChip("Queue", "$liveQueueSize", Modifier.weight(1f))
         }
         Spacer(Modifier.height(4.dp))
         Text(
@@ -102,20 +116,27 @@ private fun OverviewChips(stats: StatsCalculator.Snapshot, liveQueueSize: Int) {
 }
 
 @Composable
-private fun StatChip(label: String, value: String, highlight: Boolean = false) {
+private fun StatChip(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    highlight: Boolean = false
+) {
     Column(
-        Modifier
-            .clip(RoundedCornerShape(14.dp))
+        modifier
+            .clip(RoundedCornerShape(10.dp))
             .background(
                 if (highlight) MaterialTheme.colorScheme.primaryContainer
                 else MaterialTheme.colorScheme.surface
             )
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             value,
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
+            maxLines = 1,
             color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
         )
         Text(

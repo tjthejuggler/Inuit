@@ -38,6 +38,16 @@ class QuestionStore(
     private val summaries = LinkedHashMap<String, KnowledgeSummary>()
     private val frontiers = mutableListOf<String>()
 
+    /** The podcast recommendation currently shown at the bottom of stats. */
+    private var podcastRec: PodcastRec? = null
+
+    /** Recently clicked recommendations — fed back to the LLM to avoid repeats. */
+    private val podcastSeen = mutableListOf<PodcastRec>()
+
+    /** Ready-to-show resolved recommendations — a click promotes the next
+     *  one instantly instead of waiting for a fresh LLM + directory pass. */
+    private val podcastQueue = mutableListOf<PodcastRec>()
+
     /** The question currently on screen (shown but not yet answered).
      *  Persisted so closing the app never wastes it — it comes back on restart. */
     private var pendingId: String? = null
@@ -62,6 +72,9 @@ class QuestionStore(
     fun snapshotDomainStats(): List<DomainStat> = synchronized(lock) { domainStats.values.toList() }
     fun snapshotSummaries(): List<KnowledgeSummary> = synchronized(lock) { summaries.values.toList() }
     fun snapshotFrontiers(): List<String> = synchronized(lock) { frontiers.toList() }
+    fun currentPodcast(): PodcastRec? = synchronized(lock) { podcastRec }
+    fun podcastSeen(): List<PodcastRec> = synchronized(lock) { podcastSeen.toList() }
+    fun podcastQueue(): List<PodcastRec> = synchronized(lock) { podcastQueue.toList() }
     fun questionById(id: String): Question? = synchronized(lock) { byId[id] }
 
     /** The persisted on-screen question, if it is still unanswered. */
@@ -149,6 +162,49 @@ class QuestionStore(
         bump()
     }
 
+    /** Stores a freshly generated podcast recommendation (immediate persist). */
+    fun setPodcast(rec: PodcastRec) {
+        synchronized(lock) { podcastRec = rec }
+        bump()
+        persistImmediately()
+    }
+
+    /** Adds a resolved episode to the ready stockpile (deduped, capped). */
+    fun enqueuePodcast(rec: PodcastRec) {
+        synchronized(lock) {
+            val dup = (listOfNotNull(podcastRec) + podcastQueue + podcastSeen)
+                .any { it.show == rec.show && it.title == rec.title }
+            if (dup) return
+            podcastQueue.add(rec)
+            if (podcastQueue.size > 5) podcastQueue.removeAt(0)
+        }
+        bump()
+        persistImmediately()
+    }
+
+    /** Pops the oldest stockpiled rec, if any (freshness is the caller's call). */
+    fun dequeuePodcast(): PodcastRec? {
+        val rec = synchronized(lock) {
+            if (podcastQueue.isEmpty()) null else podcastQueue.removeAt(0)
+        } ?: return null
+        bump()
+        persistImmediately()
+        return rec
+    }
+
+    /** The shown episode was tapped: retire it and remember it for dedup. */
+    fun markPodcastClicked(rec: PodcastRec) {
+        synchronized(lock) {
+            podcastSeen.add(rec.copy(clickedAt = System.currentTimeMillis()))
+            if (podcastSeen.size > 30) podcastSeen.removeAt(0)
+            if (podcastRec?.let { it.show == rec.show && it.title == rec.title } == true) {
+                podcastRec = null
+            }
+        }
+        bump()
+        persistImmediately()
+    }
+
     // ── Persistence ──────────────────────────────────────────────────────
 
     private fun bump() {
@@ -179,6 +235,9 @@ class QuestionStore(
                     put("answers", JSONArray().apply { answers.forEach { put(it.toJson()) } })
                     put("summaries", JSONObject().apply { summaries.values.forEach { put(it.domain, JSONObject().apply { put("text", it.text); put("ts", it.createdAt); put("n", it.coveredAnswers) }) } })
                     put("frontiers", JSONArray(frontiers))
+                    podcastRec?.let { put("podcast", it.toJson()) }
+                    put("podcastQ", JSONArray().apply { podcastQueue.forEach { put(it.toJson()) } })
+                    put("podcastSeen", JSONArray().apply { podcastSeen.forEach { put(it.toJson()) } })
                     pendingId?.let { put("pending", it) }
                 }
             }
@@ -233,6 +292,15 @@ class QuestionStore(
             }
             val fr = root.optJSONArray("frontiers")
             if (fr != null) for (i in 0 until fr.length()) frontiers.add(fr.optString(i))
+            podcastRec = root.optJSONObject("podcast")?.let { PodcastRec.fromJson(it) }
+            val pQ = root.optJSONArray("podcastQ")
+            if (pQ != null) for (i in 0 until pQ.length()) {
+                podcastQueue.add(PodcastRec.fromJson(pQ.optJSONObject(i) ?: continue))
+            }
+            val pSeen = root.optJSONArray("podcastSeen")
+            if (pSeen != null) for (i in 0 until pSeen.length()) {
+                podcastSeen.add(PodcastRec.fromJson(pSeen.optJSONObject(i) ?: continue))
+            }
             pendingId = root.optString("pending").ifBlank { null }
             Log.i(TAG, "loaded ${questions.size} questions, ${answers.size} answers")
         } catch (e: Exception) {

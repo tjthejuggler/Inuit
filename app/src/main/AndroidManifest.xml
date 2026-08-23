@@ -15,6 +15,28 @@
     <queries>
         <package android:name="com.example.tail" />
         <provider android:authorities="com.example.tail.provider" />
+        <!-- Podcast recommendations: discover installed podcast apps and the
+             handlers for episode links (Apple Podcasts directory pages). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="itms-podcasts" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="antennapod-subscribe" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="pktc" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="podcastaddict" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:host="podcasts.apple.com" />
+        </intent>
     </queries>
 
     <application

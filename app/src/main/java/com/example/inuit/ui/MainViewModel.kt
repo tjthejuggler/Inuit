@@ -8,6 +8,10 @@ import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
 import com.example.inuit.data.Grader
 import com.example.inuit.data.HabitEntry
+import com.example.inuit.data.PodcastAppInfo
+import com.example.inuit.data.PodcastApps
+import com.example.inuit.data.PodcastDirectory
+import com.example.inuit.data.PodcastRec
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionSelector
 import com.example.inuit.data.StatsCalculator
@@ -66,6 +70,8 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
                 if (_currentQuestion.value == null && store.queueSize() > 0) pickNext()
             }
         }
+        // Keep a podcast recommendation ready at the bottom of stats.
+        graph.podcasts.ensureRec()
     }
 
     /**
@@ -76,6 +82,8 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     fun onSessionResume() {
         sessionBoundaryMs = System.currentTimeMillis()
         statsEpoch.value = statsEpoch.value + 1L
+        // Refresh a stale podcast recommendation (kept until tapped otherwise).
+        graph.podcasts.ensureRec()
     }
 
     /**
@@ -179,6 +187,58 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun saveMcpJson(json: String) {
         viewModelScope.launch { graph.settingsStore.saveMcpJson(json) }
+    }
+
+    // ── podcast recommendations ──────────────────────────────────────────
+
+    /** The episode currently shown at the bottom of the stats panel. */
+    val podcast: StateFlow<PodcastRec?> = graph.podcasts.rec
+
+    val podcastLoading: StateFlow<Boolean> = graph.podcasts.loading
+
+    /** Previously clicked episodes, newest first. */
+    val podcastHistory: StateFlow<List<PodcastRec>> = graph.podcasts.history
+
+    private val _podcastApps = MutableStateFlow<List<PodcastAppInfo>>(emptyList())
+    val podcastApps: StateFlow<List<PodcastAppInfo>> = _podcastApps.asStateFlow()
+
+    /** The shown episode was tapped: retire it, generate the next one, open it. */
+    fun onPodcastOpened(rec: PodcastRec) {
+        graph.podcasts.onClicked(rec)
+        openInPodcastApp(rec)
+    }
+
+    /** A history episode was tapped: open it without retiring anything. */
+    fun onHistoryPodcastOpened(rec: PodcastRec) {
+        openInPodcastApp(rec)
+    }
+
+    /**
+     * Opens the episode in the user's chosen podcast app. The show's RSS
+     * feed is resolved on demand (iTunes directory) so apps with documented
+     * feed-subscribe schemes — Pocket Casts, AntennaPod — land on the exact
+     * show instead of an error; already-grounded recs open instantly.
+     */
+    private fun openInPodcastApp(rec: PodcastRec) {
+        viewModelScope.launch {
+            val pkg = graph.settingsStore.current().podcastAppPackage.ifBlank { null }
+            val resolved = PodcastDirectory.resolve(rec)
+            PodcastApps.open(graph.appContext, resolved, pkg)
+        }
+    }
+
+    /** Discovers installed podcast apps (Settings picker); cached after first load. */
+    fun loadPodcastApps() {
+        if (_podcastApps.value.isNotEmpty()) return
+        viewModelScope.launch {
+            _podcastApps.value = withContext(Dispatchers.Default) {
+                PodcastApps.find(graph.appContext)
+            }
+        }
+    }
+
+    fun savePodcastApp(pkg: String) {
+        viewModelScope.launch { graph.settingsStore.setPodcastApp(pkg) }
     }
 
     // ── Tail habit integration ───────────────────────────────────────────

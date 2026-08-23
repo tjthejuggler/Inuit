@@ -106,12 +106,15 @@ app/src/main/java/com/example/inuit/
                (foreground service: batches survive app close / screen off)
   data/        Model.kt QuestionStore.kt SettingsStore.kt Grader.kt StatsCalculator.kt
                QuestionSelector.kt   (pick strategy: threads, spaced revisits, diversity)
+               PodcastApps.kt        (podcast app discovery + episode opening)
   data/llm/    Http.kt LlmClient.kt McpClient.kt
   data/gen/    Prompts.kt ContextBuilder.kt QuestionGenerator.kt Validator.kt
                Serendipity.kt RealmTaxonomy.kt   (distant-frontier planner)
                AdaptiveSignals.kt  (off-category answers → novice-domain scaffolding)
                McpSession.kt Harvester.kt  (bulk web trivia stockpiling)
+               PodcastRecommender.kt  (weak-area-targeted episode picks)
   ui/          MainScreen.kt QuestionCard.kt StatsSections.kt SettingsScreen.kt MainViewModel.kt
+               PodcastCard.kt      (bottom-of-stats episode prescription)
   ui/charts/   Charts.kt        (custom Canvas charts — no chart dependency)
   ui/theme/                    (dark-first palette)
 ```
@@ -134,6 +137,86 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-23 (8)** — **Podcast stockpile.** The recommender now keeps a
+  queue of up to 3 fully-resolved episodes (LLM pick + iTunes feed/episode
+  grounding) behind the one on screen, persisted in the store
+  (`podcastQ`). Tapping the card promotes the next stockpiled episode to
+  the card INSTANTLY — no waiting for a fresh LLM + directory pass — and
+  the stockpile refills in the background (stale or duplicate picks are
+  dropped at promotion/enqueue time; the avoid-list now covers current +
+  queued + seen shows so spares don't echo what's lined up).
+- **2026-08-23 (7)** — **Clipboard staging + softer variety rule.** When the
+  feed-subscribe link opens the show in the chosen podcast app (Pocket Casts
+  has no episode deep link), the episode title is now staged on the
+  clipboard with a toast — one paste into the app's search jumps to the
+  episode (Android cannot paste into other apps' UIs, so clipboard-write is
+  the practical ceiling short of an accessibility service). The show-variety
+  rule was softened: appropriateness to the user's gap is the guiding
+  principle; given comparable candidates the model prefers unexplored
+  shows, but a better-fitting episode from a recent show wins over a weaker
+  new one.
+- **2026-08-23 (6)** — **Episode-level links, show diversity, collapsible
+  reasons.** Pocket Casts exposes no episode-level deep link (its `pktc://`
+  scheme covers open/play/pause/subscribe only — episode links are an open
+  feature request), so the subscribe sheet remains the deepest in-app
+  landing; recommendations now also resolve the exact EPISODE through the
+  iTunes directory (`entity=podcastEpisode`, filtered to the queried show)
+  and store its Apple episode page as the rec's URL — the system/browser
+  path opens the specific episode, and the clipboard fallback already
+  carries "show + episode" for instant in-app search. The prompt now
+  forbids repeating an already-suggested SHOW (recent distinct shows are
+  listed as off-limits), ending the same-show-every-time loop. Descriptions
+  are collapsed by default: the card's reason clips to two lines with a
+  more/less toggle, and the history dialog expands one row's reason at a
+  time (tap a row to expand, ▶ to open). 70 unit tests (2 new).
+- **2026-08-23 (5)** — **Podcast deep links that land in the app.** There is
+  no universal podcast deep link, but the RSS feed URL is a universal
+  *identifier* every podcast app understands. Recommendations are now
+  grounded at runtime against Apple's keyless iTunes Search API (new
+  `PodcastDirectory`): the show's real `feedUrl` — plus its Apple Podcasts
+  page when the model produced no link — is resolved at generation and
+  persisted on the rec. Apps with documented feed-subscribe schemes now open
+  the exact show directly: Pocket Casts `pktc://subscribe/<feed>` and
+  AntennaPod `antennapod-subscribe://<feed>` (feed URL without its own
+  scheme, per Pocket Casts' URL-scheme documentation). This replaces the
+  invalid `pktc://search/` guess that Pocket Casts' catch-all handler
+  rejected with "not a valid podcast share link"; undocumented scheme
+  guesses (Podcast Addict search) were removed for the same reason.
+  Remaining chain: episode page restricted to the app → documented search
+  links (Spotify, YouTube Music) → clipboard + cold launch. Tapping resolves
+  the feed on demand in the ViewModel, so recs persisted before this change
+  (and history entries) open correctly too. 68 unit tests (5 new).
+- **2026-08-23 (4)** — **Podcast prescriptions, hardened.** Episode links are
+  now required in practice: the prompt demands a stable public episode page
+  (Apple Podcasts preferred), the parser only accepts absolute http(s) URLs
+  with a real host, and when MCP web tools are configured the recommender
+  runs a small tool loop (≤2 calls) so the model can search for/verify the
+  episode page; a missing URL triggers one corrective retry. The card gained
+  a history button opening a dialog of previously clicked episodes (each
+  tappable, opening in the podcast app), and when no podcast app is chosen
+  it shows a "Choose your podcast app in Settings ›" link that navigates
+  straight to the Settings picker. Opening is now guaranteed to land in the
+  chosen podcast app, never the browser: episode URL restricted to the app →
+  the app's own search deep link (best-effort registry: Spotify, Podcast
+  Addict, Pocket Casts, YouTube Music) → cold-launch the app with the search
+  query copied to the clipboard (toast prompt). Linkless recommendations
+  regenerate after 10 minutes instead of 24 h. 63 unit tests (1 new).
+- **2026-08-23 (3)** — **Podcast prescriptions + honest streak.** The stats
+  panel now ends with a "Podcast prescription": one real, LLM-chosen episode
+  targeting the user's weakest knowledge areas (lowest-accuracy domains,
+  recent misses and rolling summaries feed the prompt; famous evergreen
+  episodes of well-known shows only — the same anti-hallucination stance as
+  the question engine, a direct URL only when the model is certain of a
+  stable public page). Tapping the card opens the episode in the user's
+  podcast app — selectable in Settings → Podcasts (default: system
+  resolution, with layered fallbacks: chosen app → system handler → web
+  search) — and immediately retires the pick; the next episode generates in
+  the background, and clicked episodes are remembered and avoided. The
+  overview metrics were reworked: the confusing correct-answer
+  "Streak"/"Best" pair is gone — "Day streak" now counts consecutive days
+  of usage (anchored today-or-yesterday, correctness irrelevant) — and the
+  horizontally-scrolling chips became a compact fixed 3×2 grid that is
+  always fully visible. 62 unit tests (9 new).
 - **2026-08-23 (2)** — **Tail habit integration.** Inuit now reports the number
   of questions answered to the Tail habit tracker (same IPC protocol as WAGS:
   explicit permission-guarded broadcasts + habits ContentProvider, signature

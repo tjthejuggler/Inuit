@@ -1,6 +1,7 @@
 package com.example.inuit.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -33,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -54,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
+import com.example.inuit.data.PodcastApps
 import com.example.inuit.ui.theme.Amber
 import com.example.inuit.ui.theme.LogErr
 import com.example.inuit.ui.theme.LogOk
@@ -67,6 +71,10 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val llmTest by viewModel.llmTest.collectAsStateWithLifecycle()
     val mcpTest by viewModel.mcpTest.collectAsStateWithLifecycle()
+    val podcastApps by viewModel.podcastApps.collectAsStateWithLifecycle()
+
+    // Discover installed podcast apps once for the picker.
+    LaunchedEffect(Unit) { viewModel.loadPodcastApps() }
 
     // Local editable state, re-seeded whenever persisted settings change.
     var baseUrl by rememberSaveable(settings.baseUrl) { mutableStateOf(settings.baseUrl) }
@@ -265,6 +273,46 @@ fun SettingsScreen(
                     "Seeded with z.ai web search + web reader. Paste your own API key " +
                         "into the Authorization headers. Used (sparingly, per budget) to " +
                         "ground obscure statistics questions.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // ── Podcasts ───────────────────────────────────────────────────
+            SectionCard(
+                title = "Podcasts",
+                subtitle = "which app opens recommended episodes"
+            ) {
+                val apps = remember(podcastApps) {
+                    listOf(PodcastApps.SYSTEM_DEFAULT) + podcastApps
+                }
+                apps.forEach { app ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { viewModel.savePodcastApp(app.packageName) }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        RadioButton(
+                            selected = settings.podcastAppPackage == app.packageName,
+                            onClick = { viewModel.savePodcastApp(app.packageName) }
+                        )
+                        Column {
+                            Text(app.label, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                if (app.isSystemDefault) "Android picks the handler"
+                                else app.packageName,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                Text(
+                    "Can't see your app? Leave it on System default — episodes open " +
+                        "through links your podcast apps can handle.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
