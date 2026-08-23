@@ -3,6 +3,7 @@ package com.example.inuit.data.gen
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
 import com.example.inuit.data.Net
+import com.example.inuit.data.NetStore
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionStore
 import com.example.inuit.data.llm.LlmClient
@@ -24,23 +25,36 @@ import kotlin.random.Random
 class Harvester(
     private val store: QuestionStore,
     private val llm: LlmClient,
+    private val netStore: NetStore? = null,
     private val rng: Random = Random.Default
 ) {
 
     /**
      * One harvest round. Returns how many questions were added (0 = nothing
      * usable — caller should stop). Throws IOException on network trouble.
+     *
+     * Everything is scoped to [netId]: the harvest is filed into the net it
+     * was started for, even when the user has switched to another net in
+     * the meantime — completed work is never discarded on a net switch.
+     *
+     * @param session an already-connected MCP session shared with the
+     *   personalized batch (avoids a re-handshake per round); a null or
+     *   tool-less session falls back to a fresh connection.
      */
     suspend fun harvestRound(
         cfg: LlmConfig,
         s: AppSettings,
         target: Int,
-        net: Net? = null,
+        net: Net?,
+        netId: String,
+        session: McpSession? = null,
         onNote: (String) -> Unit
     ): Int {
-        onNote("Connecting web tools…")
-        val session = McpSession(s)
-        if (!session.connect()) {
+        val tools = session?.takeIf { it.hasTools } ?: run {
+            onNote("Connecting web tools…")
+            McpSession(s).also { it.connect() }
+        }
+        if (!tools.hasTools) {
             DebugLog.w(TAG, "harvest skipped — no MCP web tools configured/reachable")
             return 0
         }
@@ -56,17 +70,17 @@ class Harvester(
         } else {
             THEMES[rng.nextInt(THEMES.size)]
         }
-        messages.add(LlmMessage.user(Prompts.harvestUserPrompt(target, theme, store.queueSize())))
+        messages.add(LlmMessage.user(Prompts.harvestUserPrompt(target, theme, store.queueSizeFor(netId))))
 
         var finalContent: String? = null
         var round = 0
         while (round < MAX_ROUNDS) {
             round++
-            val useTools = budget > 0 && session.hasTools
+            val useTools = budget > 0 && tools.hasTools
             onNote(if (useTools) "Searching the web for trivia lists ($budget lookups left)…" else "Converting found trivia…")
             val assistant = llm.chat(
                 cfg, messages,
-                tools = if (useTools) session.toolSpecs else emptyList(),
+                tools = if (useTools) tools.toolSpecs else emptyList(),
                 temperature = 0.4f,
                 maxTokens = HARVEST_MAX_TOKENS,
                 disableThinking = s.disableThinking
@@ -81,8 +95,8 @@ class Harvester(
                     budget <= 0 -> "Tool budget exhausted for this harvest. Convert what you already have."
                     else -> {
                         budget--
-                        DebugLog.i(TAG, "harvest tool call '${call.name}' args=${call.argumentsJson.take(120)}")
-                        session.call(call.name, call.argumentsJson)
+                            DebugLog.i(TAG, "harvest tool call '${call.name}' args=${call.argumentsJson.take(120)}")
+                            tools.call(call.name, call.argumentsJson)
                     }
                 }
                 messages.add(LlmMessage.tool(call.id, call.name, result))
@@ -96,7 +110,7 @@ class Harvester(
 
         // ── validate through the shared pipeline ─────────────────────────
         onNote("Validating harvested questions…")
-        val parsed = Validator.parseAndValidate(finalContent, store.snapshotQuestions(), s, emptyMap(), net)
+        val parsed = Validator.parseAndValidate(finalContent, store.snapshotQuestionsFor(netId), s, emptyMap(), net)
         var accepted = parsed.questions.map { it.copy(source = SOURCE) }.toMutableList()
         if (parsed.dropped > 0)
             DebugLog.w(TAG, "harvest validation: accepted=${accepted.size} dropped=${parsed.dropped}")
@@ -116,20 +130,20 @@ class Harvester(
         }
         if (accepted.isEmpty()) return 0
 
-        // The user may switch nets mid-harvest; never file a batch into the
-        // wrong net's store.
-        if (net != null && store.activeNetId != net.id) {
-            DebugLog.w(TAG, "net switched during harvest — discarding ${accepted.size} questions")
+        // The net may have been deleted mid-harvest; never (re)create a
+        // deleted net's store from a stale batch.
+        if (netStore != null && netStore.nets.value.none { it.id == netId }) {
+            DebugLog.w(TAG, "net '$netId' deleted during harvest — discarding ${accepted.size} questions")
             return 0
         }
 
-        store.insertQuestions(accepted)
+        store.insertQuestionsFor(netId, accepted)
         if (parsed.newFrontiers.isNotEmpty()) {
-            store.replaceFrontiers(store.snapshotFrontiers() + parsed.newFrontiers)
+            store.replaceFrontiersFor(netId, store.snapshotFrontiersFor(netId) + parsed.newFrontiers)
         }
         // Stockpile must survive process death — write now.
         withContext(Dispatchers.IO) { store.persistNow() }
-        DebugLog.i(TAG, "harvest round done: +${accepted.size} questions (theme='$theme')")
+        DebugLog.i(TAG, "harvest round done: +${accepted.size} questions into net '$netId' (theme='$theme')")
         return accepted.size
     }
 

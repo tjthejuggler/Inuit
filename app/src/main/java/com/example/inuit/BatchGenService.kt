@@ -19,24 +19,30 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Foreground service that shields batch generation (personalized + web
- * harvest) from the app being closed and the screen being turned off:
+ * harvest) — and the scheduled auto-retry after a failed batch — from the
+ * app being closed and the screen being turned off:
  *
  *  - FOREGROUND + dataSync type → the process is not cached/killed while a
- *    batch is in flight, and Doze network restrictions are lifted.
- *  - PARTIAL wake lock → the CPU keeps running with the screen off.
+ *    batch is in flight or a retry is pending, and Doze network
+ *    restrictions are lifted.
+ *  - PARTIAL wake lock → the CPU keeps running with the screen off; it is
+ *    refreshed every [WAKE_REFRESH_MS] so multi-batch refills and long
+ *    retry back-offs outlive the 10-minute safety expiry.
  *  - START_STICKY → if the system still kills us, the service restarts,
  *    the process (and its AppGraph) is recreated, and generation resumes
  *    from where the persisted store left off. Batches and answers are
  *    persisted immediately, so no progress is ever lost.
  *
- * Started/stopped automatically by [InuitApp] observing the generator state.
+ * Started/stopped automatically by [InuitApp] observing the generator's
+ * [com.example.inuit.data.gen.QuestionGenerator.serviceNeeded] flow, which
+ * stays true for the WHOLE refill run (batch → harvest → other nets) and
+ * through retry back-off waits — not just while the state says Running.
  */
 class BatchGenService : Service() {
 
@@ -48,31 +54,26 @@ class BatchGenService : Service() {
     override fun onCreate() {
         super.onCreate()
         DebugLog.i(TAG, "service created — shielding batch generation")
-        startInForeground()
-        acquireWakeLock()
-
         val graph = (application as InuitApp).graph
+        startInForeground(initialText(graph.generator.state.value))
+        acquireWakeLock()
 
         // Covers the START_STICKY restart path: the process died mid-batch,
         // the system restarted us — kick generation again (no-op if healthy).
         scope.launch { graph.generator.maybeGenerate() }
 
+        // Stand down only when no work AND no pending retry remains. The
+        // loop refreshes the wake lock each cycle so waits longer than the
+        // lock's safety expiry still keep the CPU awake.
         scope.launch {
             try {
                 while (true) {
-                    // Wait out the current run (or a startup grace period).
-                    val quiet = withTimeoutOrNull(START_GRACE_MS) {
-                        graph.generator.state.first { it !is GenState.Running }
+                    acquireWakeLock()
+                    val done = withTimeoutOrNull(WAKE_REFRESH_MS) {
+                        graph.generator.serviceNeeded.first { !it }
                     }
-                    // Still Running after the grace window → a batch is in
-                    // flight; keep waiting indefinitely.
-                    if (quiet == null) {
-                        graph.generator.state.first { it !is GenState.Running }
-                    }
-                    // Quiet now — but generation may chain straight into the
-                    // next phase (batch → stockpile harvest). Grace period.
-                    delay(QUIET_GRACE_MS)
-                    if (graph.generator.state.value !is GenState.Running) break
+                    if (done != null) break // nothing in flight, nothing scheduled
+                    // still needed — loop and refresh the wake lock
                 }
             } catch (_: Exception) {
                 // scope cancelled in onDestroy — fall through
@@ -84,7 +85,11 @@ class BatchGenService : Service() {
         // Mirror progress notes into the notification.
         scope.launch {
             graph.generator.state.collect { st ->
-                if (st is GenState.Running) updateNotification(st.note)
+                when (st) {
+                    is GenState.Running -> updateNotification(st.note)
+                    is GenState.Error -> updateNotification("Batch failed — retrying soon…")
+                    else -> {}
+                }
             }
         }
     }
@@ -103,7 +108,13 @@ class BatchGenService : Service() {
 
     // ── foreground plumbing ──────────────────────────────────────────────
 
-    private fun startInForeground() {
+    private fun initialText(state: GenState): String = when (state) {
+        is GenState.Running -> state.note
+        is GenState.Error -> "Batch failed — retrying soon…"
+        else -> "Generating questions…"
+    }
+
+    private fun startInForeground(text: String) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             nm.createNotificationChannel(
@@ -118,7 +129,7 @@ class BatchGenService : Service() {
         }
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0
-        ServiceCompat.startForeground(this, NOTIF_ID, buildNotification("Generating questions…"), type)
+        ServiceCompat.startForeground(this, NOTIF_ID, buildNotification(text), type)
     }
 
     private fun buildNotification(text: String): Notification =
@@ -147,7 +158,7 @@ class BatchGenService : Service() {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "inuit:batchgen").apply {
                 setReferenceCounted(false)
-                acquire(WAKE_TIMEOUT_MS) // safety expiry; refreshed on restart
+                acquire(WAKE_TIMEOUT_MS) // safety expiry; refreshed by the wait loop
             }
             DebugLog.i(TAG, "wake lock acquired (screen-off generation protected)")
         } catch (e: Exception) {
@@ -167,8 +178,7 @@ class BatchGenService : Service() {
         private const val TAG = "BatchGenService"
         private const val CHANNEL_ID = "batch_gen"
         private const val NOTIF_ID = 42
-        private const val START_GRACE_MS = 30_000L
-        private const val QUIET_GRACE_MS = 5_000L
+        private const val WAKE_REFRESH_MS = 60_000L
         private const val WAKE_TIMEOUT_MS = 10 * 60_000L
 
         /** Start the service; safe to call repeatedly and from the background

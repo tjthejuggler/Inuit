@@ -145,6 +145,46 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-23 (16)** — **Refill engine: batches file into the net they
+  were generated for, every net is kept stocked in the background, and
+  failed batches always come back.** Audit findings that made batches slow
+  and fragile: (1) switching nets mid-batch DISCARDED the in-flight batch
+  (minutes of LLM work thrown away; the left net stayed empty until the
+  user returned to it) — batches now file into the net they were generated
+  for via net-scoped store writes (`insertQuestionsFor` etc.), regardless
+  of what net is active; only a deleted net discards. Mid-batch reads were
+  also active-net-scoped: the validator deduped against the wrong net's
+  questions and rolling summaries could be filed into the wrong net after a
+  switch — context building, dedup, frontiers and summaries are all
+  target-net-scoped now (`ContextBuilder.build(net, netId)`). (2) Only the
+  ACTIVE net was ever refilled — the refill loop now keeps EVERY net at the
+  threshold: active net first (`pickNeedyNet`, unit-tested), then the
+  emptiest other net in the background, so a new net starts filling even
+  while the user trains elsewhere, and drained nets recover before the user
+  switches back. Long harvests yield between rounds when the active net
+  becomes needy. (3) Non-network errors (validation discard, API errors)
+  stalled generation forever — an empty queue has no refill trigger (no
+  answers → no maybeGenerate), so a single bad batch could kill refills
+  until an app restart. ANY failed episode now schedules a comeback with
+  the escalating back-off (1 min → ×5 → 15 min cap, reset on success). (4)
+  The foreground service stopped during retry back-off and between
+  batch/harvest phases, letting Android reap the process and silently
+  cancel the pending retry — the service now lives for the entire refill
+  run AND through retry waits (`QuestionGenerator.serviceNeeded`, held by
+  ref-counted jobs; the wake lock is refreshed every minute so multi-net
+  refills outlive its 10-minute safety expiry). Leaving the app or turning
+  the screen off never interrupts a batch or a scheduled retry; START_STICKY
+  still resumes after a process kill. (5) Latency: the adaptive
+  thinking-off mode is now sticky for a whole refill RUN instead of reset
+  per batch (a slow reasoner no longer re-pays a 90 s+ thinking call on
+  every chained batch of a multi-batch refill), and one MCP session is
+  shared across a net's batch + harvest rounds instead of re-handshaking
+  every server per call. (6) `QuestionStore.switchNet` could clobber a
+  just-filed batch with a stale pre-switch snapshot on disk — the flush now
+  re-snapshots under the lock at write time. Progress notes are tagged with
+  the net's name when a background net is being filled. 7 new unit tests
+  (`NetSchedulingTest`: scheduler priority + retry cadence).
+
 - **2026-08-23 (15)** — **Net stats drop the redundant "Net >" prefix on
   screen, and the generator now escalates difficulty (Socratic boundary).**
   Two follow-ups to (13)/(14). Display: inside a custom net every category

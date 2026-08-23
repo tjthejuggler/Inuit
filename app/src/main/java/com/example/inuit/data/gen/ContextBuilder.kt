@@ -52,13 +52,17 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
     /**
      * @param net the net being generated for. Custom nets suppress the
      *   all-knowledge taxonomy frontiers — the net description is the scope.
+     * @param netId the net whose data the context is built from. Defaults to
+     *   the active net; the background refill scheduler passes the TARGET
+     *   net, which may differ from the active one while it fills others.
      */
-    fun build(net: Net? = null): Context {
-        val questions = store.snapshotQuestions()
-        val answers = store.snapshotAnswers()
-        val stats = store.snapshotDomainStats()
-        val summaries = store.snapshotSummaries()
-        val frontiers = store.snapshotFrontiers()
+    fun build(net: Net? = null, netId: String? = null): Context {
+        val nid = netId ?: store.activeNetId
+        val questions = store.snapshotQuestionsFor(nid)
+        val answers = store.snapshotAnswersFor(nid)
+        val stats = store.snapshotDomainStatsFor(nid)
+        val summaries = store.snapshotSummariesFor(nid)
+        val frontiers = store.snapshotFrontiersFor(nid)
         val byId = questions.associateBy { it.id }
 
         // ── recent answers (verbatim, newest last; wrong free-text answers
@@ -151,7 +155,7 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         val revisits = plan.revisits
 
         val totals = "answers=${answers.size} correct=${answers.count { it.correct }} " +
-            "questionsAsked=${questions.count { it.servedCount > 0 }} queued=${store.queueSize()}"
+            "questionsAsked=${questions.count { it.servedCount > 0 }} queued=${store.queueSizeFor(nid)}"
 
         return Context(
             recentLines, unknownGroups, knownLines, digest.toList(), noviceLines,

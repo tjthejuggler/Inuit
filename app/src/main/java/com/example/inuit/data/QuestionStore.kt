@@ -100,28 +100,29 @@ class QuestionStore(
     /** The net all reads/writes currently target. */
     val activeNetId: String get() = activeId
 
-    /** Swaps the active net: flushes the old state to its file, loads the
+    /** Swaps the active net: flushes loaded states to their files, loads the
      *  new one (first switch loads it from disk), ticks [dataVersion].
      *
      *  Called SYNCHRONOUSLY by NetStore (via its onNetChanged hook) before
      *  the activeNet flow publishes — so every consumer reacting to the
      *  switch already sees this net active. The async collector in [init]
      *  stays wired as an idempotent safety net. The incoming net must load
-     *  inline (its data is read immediately afterwards); the outgoing flush
-     *  is offloaded to IO because this now runs on the main thread. */
+     *  inline (its data is read immediately afterwards); the flush is
+     *  offloaded to IO because this now runs on the main thread.
+     *
+     *  The flush re-snapshots under the lock at write time (via [persistNow])
+     *  instead of reusing a pre-switch payload: background generation may
+     *  file a batch into the OUTGOING net right after this call, and a stale
+     *  snapshot could clobber it on disk. */
     fun switchNet(netId: String) {
-        var outgoing: Pair<String, JSONObject>? = null
         val changed = synchronized(lock) {
             if (netId == activeId) return
-            outgoing = activeId to serializeState(activeState()) // snapshot outgoing net
             activeId = netId
             activeState() // load incoming net if not cached
             true
         }
         if (changed) {
-            outgoing?.let { (id, payload) ->
-                scope.launch(Dispatchers.IO) { writePayload(id, payload) }
-            }
+            scope.launch(Dispatchers.IO) { persistNow() }
             Log.i(TAG, "switched to net $netId")
             bump()
         }
@@ -198,6 +199,18 @@ class QuestionStore(
     fun snapshotAnswersFor(netId: String): List<AnswerRecord> =
         synchronized(lock) { stateFor(netId).answers.toList() }
 
+    fun snapshotFrontiersFor(netId: String): List<String> =
+        synchronized(lock) { stateFor(netId).frontiers.toList() }
+
+    /** Unserved questions of any net — the background refill scheduler
+     *  needs this for nets the user is not currently training in. */
+    fun queueSizeFor(netId: String): Int =
+        synchronized(lock) { stateFor(netId).questions.count { it.servedCount == 0 } }
+
+    /** Answer count already folded into any net's rolling summaries. */
+    fun summarizedAnswersFor(netId: String): Int =
+        synchronized(lock) { stateFor(netId).summarizedAnswers }
+
     // ── Writes (active net) ──────────────────────────────────────────────
 
     fun insertQuestions(newQuestions: List<Question>) {
@@ -210,6 +223,47 @@ class QuestionStore(
                 st.byId[q.id] = q
             }
         }
+        bump()
+    }
+
+    // ── Writes (any net — background generation) ─────────────────────────
+    // A batch must be filed into the net it was generated FOR, even when
+    // the user has since switched elsewhere — switching nets mid-batch
+    // must never discard completed work.
+
+    fun insertQuestionsFor(netId: String, newQuestions: List<Question>) {
+        if (newQuestions.isEmpty()) return
+        synchronized(lock) {
+            val st = stateFor(netId)
+            for (q in newQuestions) {
+                if (st.byId.containsKey(q.id)) continue
+                st.questions.add(q)
+                st.byId[q.id] = q
+            }
+        }
+        bump()
+    }
+
+    fun replaceFrontiersFor(netId: String, list: List<String>) {
+        synchronized(lock) {
+            val st = stateFor(netId)
+            st.frontiers.clear()
+            st.frontiers.addAll(list.distinct().take(40))
+        }
+        bump()
+    }
+
+    fun replaceSummariesFor(netId: String, newSummaries: List<KnowledgeSummary>) {
+        synchronized(lock) {
+            val st = stateFor(netId)
+            st.summaries.clear()
+            for (s in newSummaries) st.summaries[s.domain] = s
+        }
+        bump()
+    }
+
+    fun setSummarizedAnswersFor(netId: String, count: Int) {
+        synchronized(lock) { stateFor(netId).summarizedAnswers = count }
         bump()
     }
 

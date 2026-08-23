@@ -23,7 +23,7 @@ class AppGraph(context: Context) {
     val netStore = NetStore(context, appScope)
     val store = QuestionStore(context, appScope, netStore)
     val llm = LlmClient()
-    val harvester = Harvester(store, llm)
+    val harvester = Harvester(store, llm, netStore)
     val accents = AccentsBuilder(LocationProvider(appContext), netStore, store)
     val generator = QuestionGenerator(store, settingsStore, netStore, llm, harvester, accents, appScope)
     val podcasts = PodcastRecommender(store, settingsStore, netStore, llm, appScope)
