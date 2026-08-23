@@ -123,7 +123,7 @@ class BatchGenService : Service() {
 
     private fun buildNotification(text: String): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_stat_inuit)
             .setContentTitle("Inuit — building your question batch")
             .setContentText(text)
             .setOngoing(true)
