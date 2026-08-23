@@ -6,8 +6,11 @@ import android.content.SharedPreferences
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * A habit fetched from the Tail app's Content Provider.
@@ -32,6 +35,23 @@ fun aggregateAnswersByDate(answers: List<AnswerRecord>, zone: ZoneId): Map<Strin
         byDate[date] = (byDate[date] ?: 0) + 1
     }
     return byDate
+}
+
+/**
+ * Aggregates answers into per-date answer TIMES (`yyyy-MM-dd` → sorted list of
+ * `HH:mm:ss` strings, one per answered question) using [zone]. Same bucketing
+ * as [aggregateAnswersByDate], so the counts and times payloads always cover
+ * identical dates. Pure and JVM-testable.
+ */
+fun aggregateAnswerTimesByDate(answers: List<AnswerRecord>, zone: ZoneId): Map<String, List<String>> {
+    val fmt = DateTimeFormatter.ofPattern("HH:mm:ss")
+    val byDate = LinkedHashMap<String, MutableList<String>>()
+    for (a in answers) {
+        val zdt = Instant.ofEpochMilli(a.timestamp).atZone(zone)
+        byDate.getOrPut(zdt.toLocalDate().toString()) { mutableListOf() }
+            .add(zdt.toLocalTime().format(fmt))
+    }
+    return byDate.mapValues { (_, times) -> times.sorted() }
 }
 
 /**
@@ -117,14 +137,19 @@ class TailIntegration(context: Context) {
 
     /**
      * Fires a +1 count increment for the connected habit — called once for
-     * every answer the user submits. No-op when no habit is selected.
+     * every answer the user submits. [answerTimestampMs] is the exact moment
+     * the answer was given; Tail stamps its schedule-timeline timestamp at
+     * THAT moment (protocol v5) instead of its receive time, so answers land
+     * on the correct day and time even if delivery is delayed. No-op when no
+     * habit is selected.
      */
-    fun sendQuestionsIncrement() {
+    fun sendQuestionsIncrement(answerTimestampMs: Long = System.currentTimeMillis()) {
         val habitName = getHabitId()
         if (habitName.isBlank()) return
         sendBroadcastSafely(ACTION_INCREMENT) {
             putExtra(EXTRA_HABIT_ID, habitName)
             putExtra(EXTRA_SLOT, SLOT_QUESTIONS)
+            putExtra(EXTRA_TIMESTAMP, answerTimestampMs)
         }
         DebugLog.i("Tail", "increment sent for habit '$habitName'")
     }
@@ -145,6 +170,12 @@ class TailIntegration(context: Context) {
      * value for each date, so the operation is idempotent and today's count
      * lands exactly on the number answered so far today.
      *
+     * Protocol v5: the per-date answer TIMES ride along in the same broadcast
+     * (`EXTRA_TIMES_JSON`), so Tail's schedule timeline shows every past
+     * session at the time of day it actually happened — questions answered in
+     * close succession merge into a single session block there via Tail's
+     * 30-minute merge gap.
+     *
      * No-op (result with the aggregation only) when no habit is selected.
      */
     fun backfillAnswers(
@@ -153,10 +184,12 @@ class TailIntegration(context: Context) {
     ): BackfillResult {
         val byDate = aggregateAnswersByDate(answers, zone)
         if (habitSelected && byDate.isNotEmpty()) {
-            sendCountsForDates(byDate)
+            val byDateTimes = aggregateAnswerTimesByDate(answers, zone)
+            sendCountsForDates(byDate, byDateTimes)
             DebugLog.i(
                 "Tail",
-                "backfill sent: ${byDate.size} dates, ${answers.size} answers"
+                "backfill sent: ${byDate.size} dates, ${answers.size} answers " +
+                    "(${byDateTimes.values.sumOf { it.size }} timestamps)"
             )
         }
         return BackfillResult(dates = byDate.size, answers = answers.size)
@@ -164,9 +197,11 @@ class TailIntegration(context: Context) {
 
     /**
      * Fires the SET broadcast carrying a date→count map as compact JSON:
-     * `{"2026-01-15": 12, "2026-01-16": 5}`.
+     * `{"2026-01-15": 12, "2026-01-16": 5}` — plus, when provided, the
+     * date→times map `{"2026-01-15": ["09:13:02", ...], ...}` so Tail can
+     * place each past session on its schedule timeline.
      */
-    private fun sendCountsForDates(dateCounts: Map<String, Int>) {
+    private fun sendCountsForDates(dateCounts: Map<String, Int>, dateTimes: Map<String, List<String>>) {
         val habitName = getHabitId()
         if (habitName.isBlank() || dateCounts.isEmpty()) return
         val json = buildString {
@@ -181,7 +216,19 @@ class TailIntegration(context: Context) {
             putExtra(EXTRA_HABIT_ID, habitName)
             putExtra(EXTRA_SLOT, SLOT_QUESTIONS)
             putExtra(EXTRA_VALUES_JSON, json)
+            if (dateTimes.isNotEmpty()) {
+                putExtra(EXTRA_TIMES_JSON, timesJson(dateTimes))
+            }
         }
+    }
+
+    /** Compact JSON for the times payload: `{"date": ["HH:mm:ss", ...], ...}`. */
+    private fun timesJson(dateTimes: Map<String, List<String>>): String {
+        val obj = JSONObject()
+        for ((date, times) in dateTimes) {
+            obj.put(date, JSONArray(times))
+        }
+        return obj.toString()
     }
 
     /**
@@ -232,6 +279,20 @@ class TailIntegration(context: Context) {
 
         /** Intent extra: the habit name (String). */
         const val EXTRA_HABIT_ID = "EXTRA_HABIT_ID"
+
+        /**
+         * Protocol v5 — Intent extra (Long, epoch millis): the exact moment
+         * the increment event HAPPENED (the answer time). Tail stamps its
+         * schedule-timeline timestamp at this moment instead of receive time.
+         */
+        const val EXTRA_TIMESTAMP = "EXTRA_TIMESTAMP"
+
+        /**
+         * Protocol v5 — Intent extra (String, JSON object): per-date answer
+         * times `{"yyyy-MM-dd": ["HH:mm:ss", ...], ...}` sent with the SET
+         * action so backfilled history lands on Tail's schedule timeline.
+         */
+        const val EXTRA_TIMES_JSON = "EXTRA_TIMES_JSON"
 
         /** Intent extra: originating Inuit slot name (informational). */
         const val EXTRA_SLOT = "inuit_slot"

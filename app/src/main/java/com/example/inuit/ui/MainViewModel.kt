@@ -113,8 +113,9 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         if (q.id != questionId) return
         val correct = Grader.grade(q, raw)
         val record = store.recordAnswer(q.id, correct, raw, elapsedMs)
-        // Every persisted answer ticks the connected Tail habit by +1.
-        if (record != null) graph.tail.sendQuestionsIncrement()
+        // Every persisted answer ticks the connected Tail habit by +1, stamped
+        // at the exact answer time so Tail's schedule timeline is accurate.
+        if (record != null) graph.tail.sendQuestionsIncrement(record.timestamp)
         graph.generator.maybeGenerate()
         pickNext()
     }

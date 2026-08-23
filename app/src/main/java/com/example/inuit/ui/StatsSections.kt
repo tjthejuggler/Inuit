@@ -66,6 +66,7 @@ fun StatsPanel(
     WeakestStrongestCards(stats)
     DomainTreeCard(stats)
     ActivityCard(stats)
+    TimeOfDayCard(stats)
     GrowthCard(stats)
     ProfileCard(stats)
     if (summaries.isNotEmpty()) KnowledgeStateCard(summaries)
@@ -347,6 +348,65 @@ private fun ActivityCard(stats: StatsCalculator.Snapshot) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(90.dp)
+            )
+        }
+    }
+}
+
+// ── time of day ────────────────────────────────────────────────────────────
+
+/** "09" for a band starting at 9; "24" for the band ending the day. */
+private fun bandLabel(startHour: Int): String =
+    "%02d–%02d".format(startHour, startHour + 3)
+
+@Composable
+private fun TimeOfDayCard(stats: StatsCalculator.Snapshot) {
+    if (stats.byHour.isEmpty() || stats.byHour.all { it.attempts == 0 }) return
+    SectionCard(title = "Time of day", subtitle = "when you answer — and how sharp you are") {
+        BarChart(
+            values = stats.byHour.map { "%02d".format(it.hour) to it.attempts },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(110.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+        stats.peakHour?.let { peak ->
+            Text(
+                "Busiest hour ${"%02d".format(peak.hour)}:00 — ${peak.attempts} answers",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Accuracy by time of day",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        stats.byBand
+            .filter { it.attempts > 0 }
+            .forEach { band ->
+                ProficiencyBar(
+                    label = bandLabel(band.startHour),
+                    accuracy = band.accuracy,
+                    caption = "${band.attempts} answers" +
+                        when (band) {
+                            stats.sharpestBand -> " · your sharpest time"
+                            stats.weakestBand -> " · your weakest time"
+                            else -> ""
+                        }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+        if (stats.sharpestBand != null && stats.weakestBand != null && stats.sharpestBand != stats.weakestBand) {
+            Text(
+                "You answer ${(stats.sharpestBand.accuracy * 100).toInt()}% correctly at " +
+                    "${bandLabel(stats.sharpestBand.startHour)} but only " +
+                    "${(stats.weakestBand.accuracy * 100).toInt()}% at " +
+                    "${bandLabel(stats.weakestBand.startHour)}.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

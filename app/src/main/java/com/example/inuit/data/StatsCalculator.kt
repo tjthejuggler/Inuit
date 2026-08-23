@@ -7,6 +7,13 @@ import java.time.ZoneId
 /** Pure aggregation of the store into everything the stats screen shows. */
 object StatsCalculator {
 
+    /**
+     * Minimum answers a 3-hour band needs before it is eligible for the
+     * "sharpest / weakest time of day" highlights — below this, accuracy
+     * comparisons are noise.
+     */
+    const val MIN_BAND_ATTEMPTS: Int = 5
+
     data class DomainAgg(val path: String, val attempts: Int, val correct: Int) {
         val accuracy: Float get() = if (attempts == 0) 0f else correct.toFloat() / attempts
     }
@@ -31,6 +38,20 @@ object StatsCalculator {
         val accuracy: Float get() = if (count == 0) 0f else correct.toFloat() / count
     }
 
+    /** Answers bucketed by hour of day (0..23) — drives the volume chart. */
+    data class HourPoint(val hour: Int, val attempts: Int, val correct: Int) {
+        val accuracy: Float get() = if (attempts == 0) 0f else correct.toFloat() / attempts
+    }
+
+    /**
+     * Answers bucketed into a 3-hour band of the day (00–03, 03–06, …) —
+     * robust granularity for accuracy-by-time-of-day (single hours are
+     * usually too sparse to compare fairly).
+     */
+    data class TimeBand(val startHour: Int, val attempts: Int, val correct: Int) {
+        val accuracy: Float get() = if (attempts == 0) 0f else correct.toFloat() / attempts
+    }
+
     data class Snapshot(
         val totalAnswers: Int,
         val totalCorrect: Int,
@@ -48,7 +69,17 @@ object StatsCalculator {
         val strongest: List<DomainAgg>,
         val byDifficulty: List<TypeAggLike>,
         val byType: List<TypeAgg>,
-        val growth: List<DayPoint>
+        val growth: List<DayPoint>,
+        /** Volume + accuracy per hour of day, 24 entries (00h..23h). */
+        val byHour: List<HourPoint> = emptyList(),
+        /** Volume + accuracy per 3-hour band, 8 entries (00–03 … 21–24). */
+        val byBand: List<TimeBand> = emptyList(),
+        /** The hour with the most answers ever; null when nothing answered. */
+        val peakHour: HourPoint? = null,
+        /** Best-accuracy 3-hour band among those with enough attempts; null if none qualify. */
+        val sharpestBand: TimeBand? = null,
+        /** Worst-accuracy 3-hour band among those with enough attempts; null if none qualify. */
+        val weakestBand: TimeBand? = null
     ) {
         data class TypeAggLike(val label: String, val attempts: Int, val correct: Int)
     }
@@ -144,6 +175,25 @@ object StatsCalculator {
         val byType = typeAgg.map { (k, v) -> TypeAgg(k, v[0], v[1]) }
             .sortedByDescending { it.attempts }
 
+        // time-of-day profile: volume + accuracy per hour and per 3-hour band
+        val hourAgg = Array(24) { IntArray(2) }
+        for (a in answers) {
+            val h = Instant.ofEpochMilli(a.timestamp).atZone(zone).hour
+            hourAgg[h].let {
+                it[0]++
+                if (a.correct) it[1]++
+            }
+        }
+        val byHour = hourAgg.mapIndexed { h, v -> HourPoint(h, v[0], v[1]) }
+        val byBand = (0 until 24 step 3).map { start ->
+            val slice = hourAgg.slice(start until start + 3)
+            TimeBand(start, slice.sumOf { it[0] }, slice.sumOf { it[1] })
+        }
+        val peakHour = byHour.filter { it.attempts > 0 }.maxByOrNull { it.attempts }
+        val qualified = byBand.filter { it.attempts >= MIN_BAND_ATTEMPTS }
+        val sharpestBand = qualified.maxByOrNull { it.accuracy }
+        val weakestBand = qualified.minByOrNull { it.accuracy }
+
         // knowledge-space growth: cumulative distinct top-level domains over the 14-day window
         val seen = HashSet<String>()
         val answersByDay = answers.groupBy {
@@ -173,7 +223,12 @@ object StatsCalculator {
             strongest = strongest,
             byDifficulty = byDifficulty,
             byType = byType,
-            growth = growth
+            growth = growth,
+            byHour = byHour,
+            byBand = byBand,
+            peakHour = peakHour,
+            sharpestBand = sharpestBand,
+            weakestBand = weakestBand
         )
     }
 
