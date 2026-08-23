@@ -1,5 +1,6 @@
 package com.example.inuit
 
+import com.example.inuit.data.DomainStat
 import com.example.inuit.data.StatsCalculator
 import com.example.inuit.ui.LandscapeFilter
 import com.example.inuit.ui.MapNodeKind
@@ -14,7 +15,10 @@ import org.junit.Test
 /** The knowledge-landscape merge: taxonomy + frozen stats + filters. */
 class KnowledgeLandscapeTest {
 
-    private fun snapshot(tree: List<StatsCalculator.DomainNode>): StatsCalculator.Snapshot =
+    private fun snapshot(
+        tree: List<StatsCalculator.DomainNode>,
+        netName: String? = null
+    ): StatsCalculator.Snapshot =
         StatsCalculator.Snapshot(
             totalAnswers = 7,
             totalCorrect = 5,
@@ -31,7 +35,8 @@ class KnowledgeLandscapeTest {
             strongest = emptyList(),
             byDifficulty = emptyList(),
             byType = emptyList(),
-            growth = emptyList()
+            growth = emptyList(),
+            netName = netName
         )
 
     private fun node(
@@ -163,5 +168,42 @@ class KnowledgeLandscapeTest {
             assertTrue(n.x >= m1.minX && n.x <= m1.maxX)
             assertTrue(n.y >= m1.minY && n.y <= m1.maxY)
         }
+    }
+
+    @Test
+    fun `net stats chart subtopic realms under the net-named section`() {
+        // the real pipeline: net-rooted tags → compute() strips the net root,
+        // so the knowledge map shows one section named after the net whose
+        // realms are the subtopics themselves — never "Juggling > X" labels
+        // (the "30 juggling answers, 1 point" + redundant-prefix regressions)
+        val stats = listOf(
+            DomainStat("Juggling > Siteswap > Vanilla", 6, 4, 0),
+            DomainStat("Juggling > History", 5, 3, 0),
+            DomainStat("Juggling > Famous Jugglers", 4, 4, 0)
+        )
+        val snap = StatsCalculator.compute(emptyList(), emptyList(), stats, 0, netName = "Juggling")
+        val sections = buildLandscape(snap)
+
+        val net = sections.first { it.name == "Juggling" }
+        assertEquals(15, net.attempts)
+        assertEquals(
+            setOf("Siteswap", "History", "Famous Jugglers"),
+            net.realms.map { it.name }.toSet()
+        )
+        // no realm label repeats the net name as a prefix
+        assertTrue(net.realms.none { it.name.startsWith("Juggling") })
+
+        val model = buildMapModel(listOf(net))
+        assertTrue(model.byPath.containsKey("Siteswap > Vanilla"))
+        assertEquals(
+            MapNodeKind.TERRITORY,
+            model.byPath.getValue("Siteswap > Vanilla").kind
+        )
+    }
+
+    @Test
+    fun `frontier section keeps its generic name without a net`() {
+        val sections = buildLandscape(snapshot(listOf(node("Frontierland", "Frontierland", 1, 1))))
+        assertEquals(1, sections.first { it.name == "Frontiers" }.attempts)
     }
 }

@@ -96,7 +96,7 @@ class Harvester(
 
         // ── validate through the shared pipeline ─────────────────────────
         onNote("Validating harvested questions…")
-        val parsed = Validator.parseAndValidate(finalContent, store.snapshotQuestions(), s, emptyMap())
+        val parsed = Validator.parseAndValidate(finalContent, store.snapshotQuestions(), s, emptyMap(), net)
         var accepted = parsed.questions.map { it.copy(source = SOURCE) }.toMutableList()
         if (parsed.dropped > 0)
             DebugLog.w(TAG, "harvest validation: accepted=${accepted.size} dropped=${parsed.dropped}")

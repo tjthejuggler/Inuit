@@ -203,7 +203,10 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
             store.snapshotQuestions(),
             store.snapshotAnswers(),
             store.snapshotDomainStats(),
-            store.queueSize()
+            store.queueSize(),
+            // Custom nets: aggregate the stats knowledge map at the subtopic
+            // level — the net name alone would collapse every row into one.
+            graph.netStore.active().takeIf { !it.isAll }?.name
         )
 
     // ── settings ─────────────────────────────────────────────────────────

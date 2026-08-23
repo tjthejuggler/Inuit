@@ -149,4 +149,20 @@ class QuestionSelectorTest {
     fun `nothing at all returns null`() {
         assertNull(QuestionSelector.select(emptyList(), emptyList(), null, boundary, Random(1)))
     }
+
+    @Test
+    fun `fresh picks leap between net subtopics not just top-level realms`() {
+        // inside a custom net every path shares the top segment — diversity
+        // must therefore key on the SUBTOPIC so questions roam the net
+        val questions = listOf(
+            q("A", served = 1, domain = "Juggling > Siteswap"),
+            q("SAME", domain = "Juggling > Siteswap > 531"),
+            q("OTHER", domain = "Juggling > History")
+        )
+        val answers = listOf(a("A", correct = true)) // too fresh for a revisit
+        repeat(50) { i ->
+            val pick = QuestionSelector.select(questions, answers, null, boundary, Random(i))
+            assertEquals("OTHER", pick!!.id)
+        }
+    }
 }

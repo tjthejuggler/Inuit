@@ -97,4 +97,46 @@ class AdaptiveSignalsTest {
         val stat = DomainStat("Chemistry", attempts = 1, correct = 0)
         assertTrue(AdaptiveSignals.noviceDomains(listOf(stat), mapOf("Chemistry" to 1)).isEmpty())
     }
+
+    // ── challengeDomains ─────────────────────────────────────────────────
+
+    @Test
+    fun `consistent mastery flags challenge escalation`() {
+        val out = AdaptiveSignals.challengeDomains(
+            listOf(
+                DomainStat("Science > Astronomy", attempts = 4, correct = 4),
+                DomainStat("History", attempts = 10, correct = 6)   // 60% — not mastered
+            )
+        )
+        assertEquals(listOf("Science"), out.map { it.path })
+        assertEquals(4, out.first().attempts)
+    }
+
+    @Test
+    fun `challenge areas aggregate at subtopic level inside a net`() {
+        val out = AdaptiveSignals.challengeDomains(
+            listOf(
+                DomainStat("Juggling > Notation > Siteswap", 4, 4, 0),
+                DomainStat("Juggling > Notation > History", 1, 1, 0),
+                DomainStat("Juggling > Patterns", 1, 0, 0)
+            ),
+            netName = "Juggling"
+        )
+        // deep paths merge into their subtopic; sparse ones stay out
+        assertEquals(listOf("Notation"), out.map { it.path })
+        assertEquals(5, out.first().attempts)
+        assertEquals(5, out.first().correct)
+    }
+
+    @Test
+    fun `few attempts or mediocre accuracy never flags challenge`() {
+        assertTrue(
+            AdaptiveSignals.challengeDomains(
+                listOf(
+                    DomainStat("Chemistry", attempts = 2, correct = 2), // too few
+                    DomainStat("Geography", attempts = 5, correct = 3)  // 60%
+                )
+            ).isEmpty()
+        )
+    }
 }

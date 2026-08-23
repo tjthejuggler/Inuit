@@ -68,6 +68,12 @@ internal enum class LandscapeFilter(val label: String) {
  * every realm and territory appears — with proficiency where the user has
  * answers, "uncharted" where they do not. Stats paths outside the taxonomy
  * (LLM exploration frontiers) are kept in a trailing "Frontiers" section.
+ *
+ * Custom nets: the all-knowledge taxonomy is out of scope — the net's own
+ * subtopics (prefix already stripped by the snapshot) ARE the landscape,
+ * charted as the realms of a single section named after the net. A subtopic
+ * that happens to share a taxonomy realm's name ("History") must stay in
+ * the net, never leak into the generic taxonomy.
  */
 internal fun buildLandscape(stats: StatsCalculator.Snapshot): List<LandscapeSection> {
     // 1. flatten the frozen tree to exact-path counters [attempts, correct]
@@ -91,6 +97,32 @@ internal fun buildLandscape(stats: StatsCalculator.Snapshot): List<LandscapeSect
             }
         }
         return out
+    }
+
+    // Net mode: the net's subtopics are the whole landscape — one section
+    // named after the net, one realm per subtopic, territories beneath.
+    val netSectionName = stats.netName?.trim()?.takeIf { it.isNotEmpty() }
+    if (netSectionName != null) {
+        val realms = flat.keys.map { it.substringBefore(" > ") }.distinct().sorted()
+            .mapNotNull { top ->
+                val paths = flat.keys.filter { it.substringBefore(" > ") == top }.sorted()
+                if (paths.isEmpty()) return@mapNotNull null
+                val topAgg = agg(top)
+                val subgroups = paths.map { p ->
+                    val name = p.split(" > ").drop(1).joinToString(" > ").ifBlank { p }
+                    val v = flat[p] ?: IntArray(2)
+                    LandscapeSubgroup(name, p, v[0], v[1])
+                }
+                LandscapeRealm(top, top, netSectionName, topAgg[0], topAgg[1], subgroups)
+            }
+        return listOf(
+            LandscapeSection(
+                name = netSectionName,
+                realms = realms.sortedWith(
+                    compareByDescending<LandscapeRealm> { it.attempts }.thenBy { it.name }
+                )
+            )
+        )
     }
 
     // 2. taxonomy sections: top-level segment → realms (taxonomy keys)

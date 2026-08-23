@@ -38,6 +38,8 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         val domainDigest: List<String>,
         /** Top-level domains flagged NOVICE — scaffold with easy recognition questions. */
         val noviceDomains: List<String>,
+        /** Consistently-mastered areas — the generator must raise difficulty here next batch. */
+        val challengeDomains: List<String>,
         val summaries: List<KnowledgeSummary>,
         val distantFrontiers: List<String>,
         val revisitFrontiers: List<String>,
@@ -110,6 +112,14 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
                 "novice ${renderStat(s)}" + if (wild > 0) " +$wild off-category answer(s)" else ""
             }
 
+        // ── challenge escalation (adaptive difficulty: mastered areas) ──
+        // Sustained correct answers are a signal to CLIMB, not to keep
+        // serving comfortable questions — surfaced explicitly so the
+        // generator cannot miss it in the digest noise.
+        val netName = net?.takeIf { !it.isAll }?.name
+        val challengeLines = AdaptiveSignals.challengeDomains(stats, netName)
+            .map { s -> "${s.path} — ${s.correct}/${s.attempts} (${(s.accuracy * 100).toInt()}%)" }
+
         // ── domain digest ─────────────────────────────────────────────────
         val withAttempts = stats.filter { it.attempts > 0 }
         val weakest = withAttempts.filter { it.attempts >= 3 }
@@ -125,15 +135,17 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         for (s in active) digest.add("active ${renderStat(s)}")
 
         // ── frontiers (serendipity: distant exploration + circling back) ──
+        // Custom nets: the all-knowledge taxonomy would drag questions out of
+        // scope, so planning runs in net mode — only net-rooted paths
+        // ("Net > Subtopic") can become distant frontiers or revisits.
         val plan = Serendipity.planFrontiers(
             recentAnswers = answers,
             questionsById = byId,
             domainStats = stats,
             llmFrontiers = frontiers,
-            rng = rng
+            rng = rng,
+            netName = netName
         )
-        // Custom nets: the all-knowledge taxonomy would drag questions out of
-        // scope, so only LLM-proposed (net-scoped) frontiers apply.
         val distant = if (net != null && !net.isAll) plan.distant
         else plan.distant.ifEmpty { listOf(RealmTaxonomy.ALL_REALMS[rng.nextInt(RealmTaxonomy.ALL_REALMS.size)]) }
         val revisits = plan.revisits
@@ -143,7 +155,7 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
 
         return Context(
             recentLines, unknownGroups, knownLines, digest.toList(), noviceLines,
-            summaries, distant, revisits, totals
+            challengeLines, summaries, distant, revisits, totals
         )
     }
 

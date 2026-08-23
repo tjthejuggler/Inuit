@@ -57,7 +57,9 @@ import kotlin.random.Random
 fun QuestionCard(
     question: Question,
     onSubmit: (questionId: String, raw: String, elapsedMs: Long) -> Unit,
-    onSkip: () -> Unit
+    onSkip: () -> Unit,
+    /** Active custom net's name — its prefix is stripped from the domain tag. */
+    netName: String? = null
 ) {
     val startedAt = remember(question.id) { System.nanoTime() }
     var input by remember(question.id) { mutableStateOf("") }
@@ -87,9 +89,9 @@ fun QuestionCard(
                     MetaTag("THREAD", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
                     Spacer(Modifier.width(6.dp))
                 }
-                question.domains.firstOrNull()?.let {
+                question.domains.firstOrNull()?.let { raw ->
                     Text(
-                        it,
+                        displayDomain(raw, netName),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -188,6 +190,21 @@ fun QuestionCard(
 
 private fun elapsedMs(startedAtNanos: Long): Long =
     (System.nanoTime() - startedAtNanos) / 1_000_000L
+
+/**
+ * Display label for a domain path: inside a custom net the net-name prefix
+ * is redundant (every question in the net is that net by definition) —
+ * show only the meaningful subtopic part. The stored tag stays net-rooted;
+ * only the rendering strips the prefix.
+ */
+private fun displayDomain(path: String, netName: String?): String {
+    if (netName == null) return path
+    val segs = path.split(" > ").map { it.trim() }.filter { it.isNotEmpty() }
+    if (segs.size >= 2 && segs[0].equals(netName.trim(), ignoreCase = true)) {
+        return segs.drop(1).joinToString(" > ")
+    }
+    return path
+}
 
 // ── small meta components ─────────────────────────────────────────────────
 

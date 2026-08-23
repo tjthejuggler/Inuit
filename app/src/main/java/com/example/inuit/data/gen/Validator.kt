@@ -2,6 +2,7 @@ package com.example.inuit.data.gen
 
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.Grader
+import com.example.inuit.data.Net
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionType
 import org.json.JSONArray
@@ -27,7 +28,8 @@ object Validator {
         raw: String,
         existingQuestions: List<Question>,
         settings: AppSettings,
-        markerToQuestion: Map<String, Question>
+        markerToQuestion: Map<String, Question>,
+        net: Net? = null
     ): Result {
         val root = try {
             JSONObject(Prompts.extractJson(raw))
@@ -53,7 +55,7 @@ object Validator {
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i)
                 ?: continue.also { reasons.add("#$i: not a JSON object") }
-            val built = buildQuestion(o, settings, markerToQuestion)
+            val built = buildQuestion(o, settings, markerToQuestion, net)
             val q = built.first
             if (q == null) {
                 dropped++
@@ -84,7 +86,8 @@ object Validator {
     private fun buildQuestion(
         o: JSONObject,
         settings: AppSettings,
-        markerToQuestion: Map<String, Question>
+        markerToQuestion: Map<String, Question>,
+        net: Net? = null
     ): Pair<Question?, String?> {
         val type = QuestionType.from(o.optString("type"))
         val prompt = o.optString("prompt").trim()
@@ -103,6 +106,14 @@ object Validator {
             d.split(">").joinToString(" > ") { it.trim().replaceFirstChar { c -> c.uppercase() } }
         }.filter { it.length in 2..80 }.distinct()
         if (cleanDomains.isEmpty()) return null to "all domain paths invalid after cleaning"
+        // Custom nets: the knowledge map is drawn from "Net > Subtopic" paths,
+        // so flat or foreign-rooted tags are normalized (or rejected when no
+        // subtopic can be recovered). See NET DOMAIN TAGGING in Prompts.
+        val finalDomains: List<String> = if (net != null && !net.isAll) {
+            val (normalized, reason) = normalizeNetDomains(cleanDomains, net)
+            if (normalized == null) return null to reason
+            normalized
+        } else cleanDomains
 
         var answerIndex: Int? = null
         var answerBool: Boolean? = null
@@ -203,7 +214,7 @@ object Validator {
             tolerance = tolerance,
             unit = unit,
             acceptedAnswers = accepted,
-            domains = cleanDomains,
+            domains = finalDomains,
             difficulty = difficulty,
             parentId = parentId,
             rootId = rootId ?: id,
@@ -213,6 +224,43 @@ object Validator {
             rationale = o.optString("rationale").trim().ifBlank { null }
         )
         return q to null
+    }
+
+    /**
+     * Normalizes domain paths for a custom net so the knowledge map can grow
+     * territories inside the net:
+     *  - "Subtopic" (bare)            → "Net > Subtopic"
+     *  - "Net > Subtopic"             → unchanged
+     *  - "Broad > Net > Subtopic"     → "Net > Subtopic"  (strips a leading
+     *    all-knowledge realm the model prepended)
+     *  - "Other > Path"               → "Net > Other > Path"
+     *  - "Net" (flat net name only)   → rejected — no subtopic to chart.
+     */
+    internal fun normalizeNetDomains(domains: List<String>, net: Net): Pair<List<String>?, String?> {
+        val netName = net.name.trim()
+        val out = LinkedHashSet<String>()
+        for (d in domains) {
+            val segs = d.split(">").map { it.trim() }.filter { it.isNotEmpty() }
+            when {
+                segs.size == 1 && segs[0].equals(netName, ignoreCase = true) ->
+                    // flat net-name tag: nothing to chart — caller drops the question
+                    continue
+                segs.size == 1 ->
+                    out.add("$netName > ${segs[0]}")
+                segs[0].equals(netName, ignoreCase = true) ->
+                    out.add(segs.joinToString(" > "))
+                segs[1].equals(netName, ignoreCase = true) ->
+                    out.add(segs.drop(1).joinToString(" > "))
+                else ->
+                    out.add((listOf(netName) + segs).joinToString(" > "))
+            }
+        }
+        val valid = out.filter { it.length in 2..120 }
+        if (valid.isEmpty()) {
+            return null to "domain tag is just the flat net name \"$netName\" — " +
+                "every question needs a \"Net > Subtopic\" path for the knowledge map"
+        }
+        return valid to null
     }
 
     fun wordSet(s: String): Set<String> =

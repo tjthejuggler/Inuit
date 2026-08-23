@@ -5,6 +5,7 @@ import com.example.inuit.data.DomainStat
 import com.example.inuit.data.Grader
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionType
+import com.example.inuit.data.StatsCalculator
 
 /**
  * Pure adaptive-difficulty signals extracted from answer history (no Android
@@ -60,6 +61,34 @@ object AdaptiveSignals {
         if (s.attempts < 2) return@filter false
         val wild = wildMissCounts[s.path] ?: 0
         s.accuracy < 0.35f || (s.accuracy < 0.5f && wild > 0)
+    }
+
+    /**
+     * The other half of the adaptive dial: areas the user has CONSISTENTLY
+     * MASTERED (>= 80% over >= 3 attempts), aggregated at the same level the
+     * stats screen shows (subtopic inside a custom net, top realm otherwise).
+     * The generator must ESCALATE difficulty here — sustained correct
+     * answers are a signal to climb, not to keep serving comfortable
+     * questions (Socratic: stay at the boundary of the user's knowledge).
+     */
+    fun challengeDomains(
+        stats: List<DomainStat>,
+        netName: String? = null
+    ): List<DomainStat> {
+        val agg = LinkedHashMap<String, IntArray>()
+        for (s in stats) {
+            val key = StatsCalculator.topKey(s.path, netName)
+            agg.getOrPut(key) { IntArray(2) }.let {
+                it[0] += s.attempts
+                it[1] += s.correct
+            }
+        }
+        return agg.map { (k, v) -> DomainStat(k, v[0], v[1], 0) }
+            .filter { it.attempts >= 3 && it.accuracy >= 0.8f }
+            .sortedWith(
+                compareByDescending<DomainStat> { it.accuracy }.thenByDescending { it.attempts }
+            )
+            .take(8)
     }
 
     /**

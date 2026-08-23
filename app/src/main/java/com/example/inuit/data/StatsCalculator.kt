@@ -81,16 +81,30 @@ object StatsCalculator {
         /** Best-accuracy 3-hour band among those with enough attempts; null if none qualify. */
         val sharpestBand: TimeBand? = null,
         /** Worst-accuracy 3-hour band among those with enough attempts; null if none qualify. */
-        val weakestBand: TimeBand? = null
+        val weakestBand: TimeBand? = null,
+        /** Active custom net's name when these stats are net-scoped; null for the All net. */
+        val netName: String? = null
     ) {
         data class TypeAggLike(val label: String, val attempts: Int, val correct: Int)
     }
 
+    /**
+     * @param netName active custom net's name, if any. Inside a net every
+     *   domain path shares the net name as its first segment, so "top-level
+     *   realm" aggregation would collapse the whole net into one row
+     *   ("Juggling — 27/30"). Net mode therefore aggregates — and DISPLAYS —
+     *   at the SUBTOPIC level with the redundant net prefix stripped
+     *   ("Notation", not "Juggling > Notation": everything on screen is
+     *   already that net) for topDomains / domainsExplored / growth / the
+     *   domain tree, which is what the stats knowledge map, realm chips and
+     *   knowledge-map screen show.
+     */
     fun compute(
         questions: List<Question>,
         answers: List<AnswerRecord>,
         domainStats: List<DomainStat>,
-        queueSize: Int
+        queueSize: Int,
+        netName: String? = null
     ): Snapshot {
         val byId = questions.associateBy { it.id }
         val total = answers.size
@@ -135,13 +149,13 @@ object StatsCalculator {
             }
         }
 
-        // domain tree from hierarchical paths
-        val tree = buildTree(domainStats)
+        // domain tree from hierarchical paths (net mode: net root stripped)
+        val tree = buildTree(domainStats, netName)
 
-        // top-level aggregation
+        // top-level aggregation (subtopic level inside a custom net)
         val topAgg = HashMap<String, IntArray>()
         for (s in domainStats) {
-            val top = s.path.substringBefore(" > ")
+            val top = topKey(s.path, netName)
             topAgg.getOrPut(top) { IntArray(2) }.let {
                 it[0] += s.attempts
                 it[1] += s.correct
@@ -204,7 +218,7 @@ object StatsCalculator {
         }
         val growth = byDay.map { d ->
             answersByDay[d.day].orEmpty().forEach { a ->
-                byId[a.questionId]?.domains?.firstOrNull()?.let { seen.add(it.substringBefore(" > ")) }
+                byId[a.questionId]?.domains?.firstOrNull()?.let { seen.add(topKey(it, netName)) }
             }
             DayPoint(d.day, seen.size, 0)
         }
@@ -230,11 +244,30 @@ object StatsCalculator {
             byBand = byBand,
             peakHour = peakHour,
             sharpestBand = sharpestBand,
-            weakestBand = weakestBand
+            weakestBand = weakestBand,
+            netName = netName
         )
     }
 
-    private fun buildTree(stats: List<DomainStat>): List<DomainNode> {
+    /**
+     * Aggregation key for "top-level realm" views: the first path segment,
+     * except inside a custom net where net-rooted paths key on the SUBTOPIC
+     * alone — the net name is redundant on screen (everything shown is that
+     * net) and must not prefix every realm label.
+     */
+    fun topKey(path: String, netName: String?): String {
+        val segs = path.split(" > ").map { it.trim() }.filter { it.isNotEmpty() }
+        if (segs.isEmpty()) return path
+        if (netName != null &&
+            segs.size >= 2 &&
+            segs[0].equals(netName.trim(), ignoreCase = true)
+        ) {
+            return segs[1]
+        }
+        return segs[0]
+    }
+
+    private fun buildTree(stats: List<DomainStat>, netName: String? = null): List<DomainNode> {
         class Mutable(val name: String, val path: String) {
             var attempts = 0
             var correct = 0
@@ -244,8 +277,16 @@ object StatsCalculator {
         val roots = LinkedHashMap<String, Mutable>()
         for (s in stats) {
             if (s.attempts == 0) continue
-            val segments = s.path.split(" > ").map { it.trim() }.filter { it.isNotEmpty() }
+            var segments = s.path.split(" > ").map { it.trim() }.filter { it.isNotEmpty() }
             if (segments.isEmpty()) continue
+            // Net mode: the net-name root would prefix every branch of the
+            // tree — drop it so the tree (and the knowledge map built from
+            // it) starts at the subtopics themselves.
+            if (netName != null && segments.size >= 2 &&
+                segments[0].equals(netName.trim(), ignoreCase = true)
+            ) {
+                segments = segments.drop(1)
+            }
             var level = roots
             var pathSoFar = ""
             var node: Mutable? = null

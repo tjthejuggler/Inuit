@@ -360,7 +360,7 @@ class QuestionGenerator(
             // ── validate ──────────────────────────────────────────────────
             _state.value = GenState.Running("Validating…")
             val existing = store.snapshotQuestions()
-            val parsed = Validator.parseAndValidate(finalContent, existing, s, ctx.markerToQuestion)
+            val parsed = Validator.parseAndValidate(finalContent, existing, s, ctx.markerToQuestion, net)
             var accepted = parsed.questions.toMutableList()
             if (parsed.dropped > 0 || accepted.isEmpty()) {
                 DebugLog.w(TAG, "validation: accepted=${accepted.size} dropped=${parsed.dropped}")

@@ -23,7 +23,14 @@ object Prompts {
 $intro. You create batches of questions.
 
 NET SCOPE — the user is training inside a net named "${net.name}", described as: $desc
-Every question must fall STRICTLY within this net's scope. Rule 4's breadth requirement applies WITHIN the net: spread across its subtopics, eras, methods, figures and neighboring facets the description allows. Rule 5's top-level domains must be meaningful subdivisions of the net's scope (e.g. "${net.name} > …"), not the broad realms of all knowledge. Never emit a question outside the net, however tempting.
+Every question must fall STRICTLY within this net's scope. Rule 4's breadth requirement applies WITHIN the net: spread across its subtopics, eras, methods, figures and neighboring facets the description allows. Never emit a question outside the net, however tempting.
+
+NET DOMAIN TAGGING — the app draws the user's knowledge map of this net from your domain tags, so they MUST be hierarchical:
+- Every domain path MUST start with the net's name and carry at least one meaningful SUBTOPIC level: "${net.name} > Subtopic" (optionally "${net.name} > Subtopic > Facet").
+- The subtopic names the specific slice the question lives in (e.g. "${net.name} > History", "${net.name} > Techniques", "${net.name} > Famous Figures", "${net.name} > Equipment", "${net.name} > Records & Numbers") — mirror whatever facets this net actually has.
+- A flat path that is just "${net.name}" is INVALID and will be rejected: it tells the map nothing about where within the net the question belongs.
+- Spread the batch across MANY DIFFERENT subtopics (aim for at least half as many distinct subtopics as questions); invent new subtopic names rather than reusing one catch-all.
+- "new_frontiers" must also be net-scoped two-level paths ("${net.name} > Unexplored Subtopic").
 """.trimIndent() + "\n"
     }
 
@@ -40,10 +47,11 @@ ABSOLUTE RULES:
    - Prefer multiple_choice and true_false formats for sub-questions — recognition scaffolds recall; save numeric/fill_blank for the target itself.
    - Set "parent_hint" to the [U#] marker of the target you are decomposing.
 4. VARIETY — mix all four types (true_false, multiple_choice, numeric, fill_blank). Mix difficulties 1-5 (1 = most people know; 5 = expert). Include famous trivia AND delightfully obscure but rock-solid facts (statistics, magnitudes, records, etymology). At least half the batch must open subdomains never present in the context — breadth of the knowledge space matters more than depth.
-5. DOMAIN TAGS — tag every question with 1-3 hierarchical paths using " > " separators (e.g. "Science > Physics > Optics"). Reuse existing paths from the context when they fit; create deeper/more specific paths when the question is narrower. Top level must be one of the broad realms seen in context or an equally broad new one.
+5. DOMAIN TAGS — tag every question with 1-3 hierarchical paths using " > " separators (e.g. "Science > Physics > Optics"). Reuse existing paths from the context when they fit; create deeper/more specific paths when the question is narrower. Top level must be one of the broad realms seen in context or an equally broad new one. Inside a custom net, paths instead start with the net's name plus a subtopic — follow the NET DOMAIN TAGGING block above exactly.
 6. WEB TOOLS — you may call the provided web search / web reader tools AT MOST $mcpBudget TIMES TOTAL for this whole batch, and only to (a) ground obscure statistics you are not already certain of, or (b) double-check a borderline fact. Never for common knowledge. If the budget is 0 or exhausted, generate only from certain knowledge.
 7. CONFIDENCE — report honest calibrated certainty per question (0-1). Questions below the threshold are discarded; do not inflate.
 8. OFF-CATEGORY ANSWERS → NOVICE SCAFFOLDING — recent answers may show the user's actual wrong answer. Classify every wrong free-text answer: a NEAR-MISS (wrong but the right kind of entity, e.g. "Saturn" for the largest planet) just needs the normal ladder; an OFF-CATEGORY answer (not even the right kind of entity, e.g. a continent named as a planet, a city as a country, a person as a chemical element) means the user does not know the BASIC ENTITIES of that domain. For any such domain: rebuild from recognition — over the next batches ask difficulty 1-2 MULTIPLE_CHOICE / TRUE_FALSE questions that introduce and name the domain's basic entities (members, categories, famous examples) BEFORE any recall (fill_blank/numeric) question returns to it. Ladder back up gradually as those are answered.
+9. ADAPTIVE CHALLENGE — aim every batch at the BOUNDARY of the user's knowledge, Socratic style: questions they must stretch for but can ultimately reach. Treat recent performance as a difficulty dial: wherever the user answers consistently correctly (especially at difficulty 3+), the next questions there MUST climb — more specialized facets, finer distinctions, +1 or +2 difficulty — until misses appear; wherever they miss, step back down one rung. Never park at comfortable questions the user has clearly mastered, and never bury a struggling user in expert trivia. Early easy questions are calibration, not a destination: an experienced user must feel challenged by every batch.
 
 OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
 {
@@ -121,6 +129,13 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         if (ctx.domainDigest.isEmpty()) sb.append("(no stats yet)\n")
         else ctx.domainDigest.forEach { sb.append(it).append('\n') }
 
+        if (ctx.challengeDomains.isNotEmpty()) {
+            sb.append("\n== CHALLENGE ESCALATION (consistently correct — climb here next) ==\n")
+            ctx.challengeDomains.forEach { sb.append("- ").append(it).append('\n') }
+            sb.append("→ mastered at the current level: the next batch in these areas must be HARDER ")
+                .append("(more specialized facets, finer distinctions, +1..2 difficulty) until misses appear.\n")
+        }
+
         if (ctx.distantFrontiers.isNotEmpty()) {
             sb.append("\n== DISTANT FRONTIERS (maximally unlike anything recent — novelty pressure; obscure fields welcome) ==\n")
             ctx.distantFrontiers.forEach { sb.append("- ").append(it).append('\n') }
@@ -177,7 +192,11 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
                 sb.append("include at least 2 easy recognition questions (difficulty 1-2, multiple_choice or true_false) ")
                 .append("that introduce that domain's basic entities. ")
         }
-        sb.append("Prefer difficulty near the user's level: slightly above their comfort zone in weak areas, higher in strong areas.")
+        val escalationRef = if (ctx.challengeDomains.isNotEmpty()) " (see CHALLENGE ESCALATION)" else ""
+        sb.append("Calibrate difficulty to the BOUNDARY of the user's knowledge: in consistently-correct ")
+            .append("areas$escalationRef the next questions must be harder — more specialized, ")
+            .append("finer distinctions, higher difficulty; in missed areas step back down. Challenging but ")
+            .append("never impossible: the user should have to work for most answers yet still be able to reach them.")
         return sb.toString()
     }
 
@@ -246,7 +265,9 @@ Reply with a single JSON object, no fences: {"summaries": {"<domain>": "<summary
         val scope = if (net == null || net.isAll) "" else
             "\nNET SCOPE — the stockpile belongs to the \"${net.name}\" net: ${net.description.ifBlank { net.name }}. " +
                 "Only harvest trivia that falls STRICTLY within this scope; general-knowledge lists outside it are useless here. " +
-                "Rule 6's variety applies across the net's subtopics.\n"
+                "Rule 6's variety applies across the net's subtopics. " +
+                "Rule 3's domain paths must be net-scoped and hierarchical — \"${net.name} > Subtopic\" (e.g. \"${net.name} > History\", \"${net.name} > Techniques\"); " +
+                "a flat \"${net.name}\" tag is INVALID. Spread the harvest across the net's different subtopics.\n"
         return """
 You are the stockpile harvester of Inuit, a trivia app. Your job is VOLUME: use the provided web search / web reader tools (AT MOST $toolBudget CALLS TOTAL) to find large, reputable trivia question lists online, then convert what you actually found into Inuit's question format. These questions are NOT personalized — they are for a stockpile, so no user context is given.$scope
 

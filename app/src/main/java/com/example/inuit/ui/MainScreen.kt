@@ -132,7 +132,10 @@ fun MainScreen(
                         QuestionCard(
                             question = q,
                             onSubmit = viewModel::submitAnswer,
-                            onSkip = viewModel::skip
+                            onSkip = viewModel::skip,
+                            // Inside a custom net the tag's net prefix is
+                            // redundant — the card shows the subtopic only.
+                            netName = activeNet.takeIf { !it.isAll }?.name
                         )
                         // Generation progress / errors sit below the question.
                         if (genState is GenState.Running || genState is GenState.Error) {

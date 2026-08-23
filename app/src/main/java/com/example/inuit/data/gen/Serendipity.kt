@@ -51,24 +51,61 @@ object Serendipity {
     /** Weight of one profile entry at the given familiarity mass. */
     private const val FAMILIARITY_SCALE = 1.5f
 
+    /**
+     * @param netName when set, planning is scoped to a custom net: candidates
+     *   are net-rooted paths only ("Net > Subtopic"), diversity is enforced
+     *   at the SUBTOPIC level (the top segment is always the net name), and
+     *   the all-knowledge taxonomy is ignored entirely.
+     */
     fun planFrontiers(
         recentAnswers: List<AnswerRecord>,
         questionsById: Map<String, Question>,
         domainStats: List<DomainStat>,
         llmFrontiers: List<String>,
         nowMs: Long = System.currentTimeMillis(),
-        rng: Random = Random.Default
+        rng: Random = Random.Default,
+        netName: String? = null
     ): FrontierPlan {
         val profile = decayedProfile(recentAnswers, questionsById, nowMs)
         val seenPaths = domainStats.filter { it.attempts > 0 }.map { it.path }.toSet()
         val seenRealms = seenPaths.mapNotNull { RealmTaxonomy.topRealm(it) }.toSet()
 
-        val candidates = (RealmTaxonomy.ALL_PATHS + llmFrontiers).distinct()
-        val distant = pickDistant(candidates, profile, seenRealms, rng)
-        val distantRealms = distant.mapNotNull { RealmTaxonomy.topRealm(it) }.toSet()
-        val revisits = pickRevisits(domainStats, nowMs, distantRealms, rng)
+        val distant: List<String>
+        val distantKeys: Set<String>
+        if (netName != null) {
+            // Net mode: LLM-proposed frontiers plus queued-but-never-answered
+            // subtopics from the net's own question pool — real unexplored
+            // territory the map can chart next.
+            val scoped = (llmFrontiers + unseenNetPaths(questionsById, netName, seenPaths))
+                .filter { RealmTaxonomy.topRealm(it)?.equals(netName, ignoreCase = true) == true }
+                .distinct()
+            distant = pickDistant(scoped, profile, emptySet(), rng, keyBySubtopic = true)
+            distantKeys = distant.mapNotNull { subtopicKey(it) }.toSet()
+        } else {
+            val candidates = (RealmTaxonomy.ALL_PATHS + llmFrontiers).distinct()
+            distant = pickDistant(candidates, profile, seenRealms, rng, keyBySubtopic = false)
+            distantKeys = distant.mapNotNull { RealmTaxonomy.topRealm(it) }.toSet()
+        }
+        val revisits = pickRevisits(domainStats, nowMs, distantKeys, rng, keyBySubtopic = netName != null)
         return FrontierPlan(distant, revisits)
     }
+
+    /** Second path segment — the subtopic key inside a net ("Net > Sub"). */
+    internal fun subtopicKey(path: String): String? =
+        RealmTaxonomy.segments(path).getOrNull(1)
+
+    /** Net-rooted domain paths of questions that exist but were never answered. */
+    private fun unseenNetPaths(
+        questionsById: Map<String, Question>,
+        netName: String,
+        seenPaths: Set<String>
+    ): List<String> = questionsById.values.asSequence()
+        .flatMap { it.domains.asSequence() }
+        .filter { RealmTaxonomy.topRealm(it)?.equals(netName, ignoreCase = true) == true }
+        .filter { it !in seenPaths }
+        .distinct()
+        .take(60)
+        .toList()
 
     // ── profile ──────────────────────────────────────────────────────────
 
@@ -136,25 +173,28 @@ object Serendipity {
         candidates: List<String>,
         profile: List<ProfileEntry>,
         seenRealms: Set<String>,
-        rng: Random
+        rng: Random,
+        keyBySubtopic: Boolean = false
     ): List<String> {
-        data class Scored(val path: String, val realm: String?, val score: Float)
+        data class Scored(val path: String, val key: String?, val unseenRealm: Boolean, val score: Float)
 
         val scored = candidates.mapNotNull { path ->
             val realm = RealmTaxonomy.topRealm(path) ?: return@mapNotNull null
+            val key = if (keyBySubtopic) subtopicKey(path) else realm
             var s = distance(path, profile)
-            if (realm !in seenRealms) s += 0.15f   // never-touched realm bonus
+            val unseenRealm = !keyBySubtopic && realm !in seenRealms
+            if (unseenRealm) s += 0.15f            // never-touched realm bonus
             s += rng.nextFloat() * 0.05f           // tie-breaking jitter
-            Scored(path, realm, s)
+            Scored(path, key, unseenRealm, s)
         }.sortedByDescending { it.score }
 
         val out = ArrayList<String>(DISTANT_COUNT)
-        val usedRealms = HashSet<String>()
+        val usedKeys = HashSet<String>()
         for (c in scored) {
             if (out.size >= DISTANT_COUNT) break
-            val realm = c.realm ?: continue
-            if (realm in usedRealms) continue       // frontier diversity itself
-            usedRealms.add(realm)
+            val key = c.key ?: continue
+            if (key in usedKeys) continue          // frontier diversity itself
+            usedKeys.add(key)
             out.add(c.path)
         }
         return out
@@ -164,29 +204,31 @@ object Serendipity {
         stats: List<DomainStat>,
         nowMs: Long,
         excludedRealms: Set<String>,
-        rng: Random
+        rng: Random,
+        keyBySubtopic: Boolean = false
     ): List<String> {
-        data class Scored(val path: String, val realm: String?, val score: Float)
+        data class Scored(val path: String, val key: String?, val score: Float)
 
         val scored = stats.mapNotNull { s ->
             if (s.attempts < 2) return@mapNotNull null
             val ageDays = ((nowMs - s.lastSeen).coerceAtLeast(0)) / DAY_MS
             if (ageDays < REVISIT_MIN_AGE_DAYS) return@mapNotNull null
-            val realm = RealmTaxonomy.topRealm(s.path) ?: return@mapNotNull null
-            if (realm in excludedRealms) return@mapNotNull null
+            val key = if (keyBySubtopic) subtopicKey(s.path)
+            else RealmTaxonomy.topRealm(s.path)
+            if (key == null || key in excludedRealms) return@mapNotNull null
             // circle back harder when it was weak and has had time to fade
             val age = (ageDays / 7.0).coerceAtMost(1.5).toFloat()
             val weakness = 1f - s.accuracy
-            Scored(s.path, realm, weakness * age + rng.nextFloat() * 0.05f)
+            Scored(s.path, key, weakness * age + rng.nextFloat() * 0.05f)
         }.sortedByDescending { it.score }
 
         val out = ArrayList<String>(REVISIT_COUNT)
-        val usedRealms = HashSet<String>()
+        val usedKeys = HashSet<String>()
         for (c in scored) {
             if (out.size >= REVISIT_COUNT) break
-            val realm = c.realm ?: continue
-            if (realm in usedRealms) continue
-            usedRealms.add(realm)
+            val key = c.key ?: continue
+            if (key in usedKeys) continue
+            usedKeys.add(key)
             out.add(c.path)
         }
         return out

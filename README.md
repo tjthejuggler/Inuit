@@ -145,6 +145,81 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-23 (15)** — **Net stats drop the redundant "Net >" prefix on
+  screen, and the generator now escalates difficulty (Socratic boundary).**
+  Two follow-ups to (13)/(14). Display: inside a custom net every category
+  label repeated the net name ("Juggling > Notation") — pointless, since
+  everything on screen is already that net. Stored tags stay net-rooted
+  (grouping, frontier planning and validation depend on the prefix); the
+  stripping happens at every presentation boundary: `StatsCalculator.topKey`
+  now returns the bare subtopic ("Notation"), `buildTree` drops the net
+  root (so the domain tree and the knowledge map start at the subtopics),
+  `Snapshot` carries `netName`, and `QuestionCard` takes a `netName` param
+  to trim its domain tag. The knowledge map inside a custom net is now the
+  net's own landscape: one section named after the net, one realm per
+  subtopic — the all-knowledge taxonomy is out of scope there (a juggling
+  subtopic called "History" no longer leaks into the generic History
+  realm). Adaptive challenge: new rule 9 in the system prompt ("ADAPTIVE
+  CHALLENGE" — recent performance is a difficulty dial; sustained correct
+  answers must raise difficulty until misses appear, misses ease back; aim
+  at the boundary of the user's knowledge), a CHALLENGE ESCALATION section
+  in the generation request (`AdaptiveSignals.challengeDomains`: ≥80% over
+  ≥3 attempts, aggregated at subtopic level inside nets, realm level in
+  All), and a strengthened TASK directive — all phrased generically for
+  every net, All included. Tests: StatsNetAggregationTest rewritten for
+  prefix-free keys + tree, KnowledgeLandscapeTest net section,
+  AdaptiveSignalsTest challenge domains, new PromptsTest. 115 passing.
+
+- **2026-08-23 (14)** — **Stats knowledge map now aggregates custom nets at
+  the subtopic level (retroactive).** Follow-up to (13): inspecting the
+  on-device net stores showed the questions were NEVER flat-tagged — the
+  Juggling net's 30 answered questions already carried rich paths
+  ("Juggling > Notation > Siteswap", "Juggling > History > Ancient Art",
+  …), and AI Agents likewise. What collapsed them was
+  `StatsCalculator.compute`'s top-level aggregation, which keys on the
+  FIRST path segment — inside a net that is always the net name, so the
+  stats-screen knowledge map (radar + realm rows, driven by
+  `topDomains`) rendered a single "Juggling" spoke and the Realms chip
+  read 1. Fix: `compute` gained a `netName` parameter (passed by
+  `MainViewModel.computeSnapshot` for the active custom net) and a
+  `topKey` helper — net-rooted paths aggregate at the first TWO segments
+  ("Juggling > Notation"), everything else keeps the legacy first-segment
+  behavior; `domainsExplored` and the knowledge-space growth chart use
+  the same key. No data migration was needed: all existing answers light
+  up as subtopic categories immediately (Juggling → Notation / Patterns /
+  History / Props / Records / Organizations…, AI Agents → Protocols /
+  Frameworks / Benchmarks / Methods…). The empty Turkish net needs
+  nothing — generation now tags hierarchically from the start.
+
+- **2026-08-23 (13)** — **Fixed custom nets charting as a single flat point
+  on the knowledge map.** Symptom: 30 juggling answers spanning siteswap,
+  patterns, history and famous jugglers, yet the map showed one realm
+  ("Juggling") with one point. Root cause chain: the generator prompt let the
+  model tag every net question with the bare net name (and told it to *reuse*
+  existing context paths, freezing the first flat tag forever); the Validator
+  accepted single-segment domains; `Serendipity`/`ContextBuilder` fed custom
+  nets all-knowledge taxonomy frontiers (out of scope) and deduped frontiers
+  by top-level realm — which collapses every "Net > Subtopic" path to one
+  inside a net; `QuestionSelector`'s diversity key used only the top segment,
+  which is identical for every question in a net. Fixes: (1) `Prompts` now
+  carries an explicit NET DOMAIN TAGGING contract — every path must be
+  "Net > Subtopic" (flat net-name tags are invalid), batches must spread
+  across many distinct subtopics, and `new_frontiers` must be net-scoped;
+  the harvester prompt enforces the same for stockpiled trivia. (2)
+  `Validator.parseAndValidate` gained a `net` parameter and
+  `normalizeNetDomains`: bare subtopics are prefixed ("Siteswap" →
+  "Juggling > Siteswap"), prepended all-knowledge realms are stripped
+  ("Sports & Games > Juggling > Props" → "Juggling > Props"), and questions
+  left with only the flat net name are dropped with a diagnostic reason.
+  (3) `Serendipity.planFrontiers` gained a net mode (`netName`) — candidates
+  are net-rooted LLM frontiers plus queued-but-unanswered subtopics, with
+  diversity enforced at the SUBTOPIC level for both distant frontiers and
+  revisits; `ContextBuilder` passes the active net so taxonomy paths can no
+  longer leak into a net's frontier plan. (4) `QuestionSelector.diversityKey`
+  keys on the first TWO path segments, so consecutive questions roam the
+  net's different subtopics. Existing flat-tagged history is untouched (it
+  still charts under the net realm); new batches fill out the territories.
+
 - **2026-08-23 (12)** — **Fixed "generating forever": streaming LLM calls +
   adaptive thinking-off + bounded retries.** Diagnosis from the on-device
   debug log: reasoning models (GLM-5 on z.ai) regularly think for 5+ minutes

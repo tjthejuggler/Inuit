@@ -85,15 +85,33 @@ object QuestionSelector {
         }
 
         // ── 3. Fresh: realm-distance pressure + skip penalty ──────────────
+        // Diversity keys on the first TWO path segments: across all knowledge
+        // that is realm + subrealm, and inside a custom net (where every path
+        // shares the net-name top segment) it is the SUBTOPIC — so consecutive
+        // questions roam the net's different areas instead of clustering.
         val recentRealms = answers
             .takeLast(REALM_MEMORY)
-            .mapNotNull { a -> byId[a.questionId]?.domains?.firstOrNull()?.substringBefore(" > ") }
+            .mapNotNull { a -> byId[a.questionId]?.let { diversityKey(it) } }
             .toSet()
         val diverse = candidates.filter { q ->
-            q.domains.firstOrNull()?.substringBefore(" > ") !in recentRealms
+            diversityKey(q) !in recentRealms
         }.ifEmpty { candidates }
         val fresh = diverse.filter { it.skipCount == 0 }.ifEmpty { diverse }
         return fresh.random(rng)
+    }
+
+    /** First two domain-path segments, lowercased ("realm > subrealm"); null when untagged. */
+    internal fun diversityKey(q: Question): String? {
+        val segs = q.domains.firstOrNull()
+            ?.split(">")
+            ?.map { it.trim().lowercase() }
+            ?.filter { it.isNotEmpty() }
+            ?: return null
+        return when (segs.size) {
+            0 -> null
+            1 -> segs[0]
+            else -> "${segs[0]} > ${segs[1]}"
+        }
     }
 
     private data class Revisit(val question: Question, val lastCorrect: Boolean)

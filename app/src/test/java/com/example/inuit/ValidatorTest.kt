@@ -13,6 +13,9 @@ import org.junit.Test
 class ValidatorTest {
 
     private val settings = AppSettings(minConfidence = 0.8f)
+    private val jugglingNet = com.example.inuit.data.Net(
+        id = "net-juggle", name = "Juggling", description = "all things juggling"
+    )
 
     private fun questionJson(
         type: String = "true_false",
@@ -115,5 +118,56 @@ class ValidatorTest {
         assertEquals(1, result.questions.size)
         assertNotNull(result.questions[0].tolerance)
         assertTrue(result.questions[0].tolerance!! > 0)
+    }
+
+    // ── custom-net domain tagging (knowledge-map territories) ─────────────
+
+    @Test
+    fun `net questions get net-rooted subtopic paths`() {
+        val raw = """{"questions":[
+            ${questionJson(prompt = "In siteswap notation, is 5 a higher throw than 3?", answer = true,
+                domains = """["Juggling > Siteswap"]""")},
+            ${questionJson(prompt = "Was Enrico Rastelli a famous juggler of the 1920s?", answer = true,
+                domains = """["Siteswap"]""")},
+            ${questionJson(prompt = "Are beanbags the most common beginner prop?", answer = true,
+                domains = """["Sports & Games > Juggling > Props"]""")},
+            ${questionJson(prompt = "Is the cascade a basic juggling pattern?", answer = true,
+                domains = """["Patterns"]""")}
+        ]}""".trimIndent()
+        val result = Validator.parseAndValidate(raw, emptyList(), settings, emptyMap(), jugglingNet)
+        assertEquals(4, result.questions.size)
+        // already well-formed → unchanged
+        assertEquals(listOf("Juggling > Siteswap"), result.questions[0].domains)
+        // bare subtopic → prefixed with the net name
+        assertEquals(listOf("Juggling > Siteswap"), result.questions[1].domains)
+        // broad all-knowledge realm prepended → stripped back to the net root
+        assertEquals(listOf("Juggling > Props"), result.questions[2].domains)
+        // bare subtopic → prefixed
+        assertEquals(listOf("Juggling > Patterns"), result.questions[3].domains)
+    }
+
+    @Test
+    fun `flat net-name domain tag is rejected but mixed tags survive`() {
+        val raw = """{"questions":[
+            ${questionJson(prompt = "Is juggling older than recorded history?", answer = false,
+                domains = """["Juggling"]""")},
+            ${questionJson(prompt = "Can most people learn three-ball juggling?", answer = true,
+                domains = """["Juggling","Juggling > Basics"]""")}
+        ]}""".trimIndent()
+        val result = Validator.parseAndValidate(raw, emptyList(), settings, emptyMap(), jugglingNet)
+        assertEquals(1, result.questions.size)
+        assertEquals(listOf("Juggling > Basics"), result.questions[0].domains)
+        assertEquals(1, result.dropped)
+        assertTrue(result.dropReasons.any { it.contains("flat net name") })
+    }
+
+    @Test
+    fun `all net keeps legacy flat tagging behavior`() {
+        val raw = """{"questions":[${questionJson(domains = """["History"]""")}]}"""
+        val result = Validator.parseAndValidate(
+            raw, emptyList(), settings, emptyMap(), com.example.inuit.data.Net.ALL
+        )
+        assertEquals(1, result.questions.size)
+        assertEquals(listOf("History"), result.questions[0].domains)
     }
 }
