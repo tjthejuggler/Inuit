@@ -137,6 +137,24 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-23 (9)** — **Nets.** Every feature now lives inside a *net* — a
+  scoped question universe. The built-in **All** net is the app exactly as
+  it was (all pre-nets data migrated into it for free: it keeps the legacy
+  `inuit_store.json`), and users can create any number of custom nets
+  (e.g. *Juggling — patterns, science, technology, history, research*) from
+  Settings → Nets. A new net starts completely empty — questions, answers,
+  stats, knowledge map, frontiers, podcast recs are all per-net with zero
+  carryover — while LLM/MCP/generation settings stay global. Switching nets
+  happens in a dropdown where the old "N queued" chip sat in the top bar;
+  generation, harvesting, summaries and podcast picks all inject the net's
+  scope description into their prompts (custom nets also skip the
+  all-knowledge taxonomy frontiers and harvest net-scoped trivia), and
+  batches in flight when the user switches nets are discarded rather than
+  filed into the wrong net. Podcast recommendations can be toggled off per
+  net. Internally: `NetStore` (registry, `inuit_nets.json`) +
+  `QuestionStore` holding one lazily-loaded `NetState` per net
+  (`inuit_store_<netId>.json` per net), every store method operating on
+  the active net.
 - **2026-08-23 (8)** — **Podcast stockpile.** The recommender now keeps a
   queue of up to 3 fully-resolved episodes (LLM pick + iTunes feed/episode
   grounding) behind the one on screen, persisted in the store

@@ -3,6 +3,7 @@ package com.example.inuit.data.gen
 import com.example.inuit.data.AnswerRecord
 import com.example.inuit.data.DomainStat
 import com.example.inuit.data.KnowledgeSummary
+import com.example.inuit.data.Net
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionStore
 import kotlin.random.Random
@@ -46,7 +47,11 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
             get() = unknownGroups.associate { it.marker to it.root }
     }
 
-    fun build(): Context {
+    /**
+     * @param net the net being generated for. Custom nets suppress the
+     *   all-knowledge taxonomy frontiers — the net description is the scope.
+     */
+    fun build(net: Net? = null): Context {
         val questions = store.snapshotQuestions()
         val answers = store.snapshotAnswers()
         val stats = store.snapshotDomainStats()
@@ -127,7 +132,10 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
             llmFrontiers = frontiers,
             rng = rng
         )
-        val distant = plan.distant.ifEmpty { listOf(RealmTaxonomy.ALL_REALMS[rng.nextInt(RealmTaxonomy.ALL_REALMS.size)]) }
+        // Custom nets: the all-knowledge taxonomy would drag questions out of
+        // scope, so only LLM-proposed (net-scoped) frontiers apply.
+        val distant = if (net != null && !net.isAll) plan.distant
+        else plan.distant.ifEmpty { listOf(RealmTaxonomy.ALL_REALMS[rng.nextInt(RealmTaxonomy.ALL_REALMS.size)]) }
         val revisits = plan.revisits
 
         val totals = "answers=${answers.size} correct=${answers.count { it.correct }} " +

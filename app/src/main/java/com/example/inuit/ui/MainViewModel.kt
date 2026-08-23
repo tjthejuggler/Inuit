@@ -8,6 +8,7 @@ import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
 import com.example.inuit.data.Grader
 import com.example.inuit.data.HabitEntry
+import com.example.inuit.data.Net
 import com.example.inuit.data.PodcastAppInfo
 import com.example.inuit.data.PodcastApps
 import com.example.inuit.data.PodcastDirectory
@@ -72,6 +73,57 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         }
         // Keep a podcast recommendation ready at the bottom of stats.
         graph.podcasts.ensureRec()
+        // React to net switches: resurface the new net's pending question,
+        // unfreeze+recompute stats for it, swap the podcast card, and kick
+        // generation when its queue is empty.
+        viewModelScope.launch {
+            var handled = graph.netStore.active().id
+            graph.netStore.activeNet.collect { net ->
+                if (net.id != handled) {
+                    handled = net.id
+                    onActiveNetChanged()
+                }
+            }
+        }
+    }
+
+    /** Everything that must re-derive when the user switches nets. */
+    private fun onActiveNetChanged() {
+        _currentQuestion.value = store.pendingQuestion() ?: selectNext()
+        sessionBoundaryMs = System.currentTimeMillis()
+        statsEpoch.value = statsEpoch.value + 1L
+        graph.podcasts.onNetChanged()
+        graph.generator.maybeGenerate()
+    }
+
+    // ── nets ─────────────────────────────────────────────────────────────
+
+    /** All nets; the All net is always first. */
+    val nets: StateFlow<List<Net>> = graph.netStore.nets
+
+    /** The net the user is currently training in. */
+    val activeNet: StateFlow<Net> = graph.netStore.activeNet
+
+    /** Top-bar dropdown: switch the whole app to another net. */
+    fun selectNet(id: String) {
+        graph.netStore.setActive(id)
+    }
+
+    /** Settings: create a net (name + scope description + podcast toggle). */
+    fun createNet(name: String, description: String, podcastEnabled: Boolean) {
+        graph.netStore.createNet(name, description, podcastEnabled)
+            ?: return // blank name or cap reached — UI validates beforehand
+    }
+
+    /** Settings: rename / re-scope / re-toggle an existing net. */
+    fun updateNet(net: Net) {
+        graph.netStore.updateNet(net)
+        if (net.id == graph.netStore.active().id) graph.podcasts.onNetChanged()
+    }
+
+    /** Settings: delete a user net (the All net is immortal). */
+    fun deleteNet(id: String) {
+        graph.netStore.deleteNet(id)
     }
 
     /**

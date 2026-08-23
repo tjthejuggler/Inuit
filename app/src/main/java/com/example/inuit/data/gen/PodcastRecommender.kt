@@ -3,6 +3,8 @@ package com.example.inuit.data.gen
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
 import com.example.inuit.data.DomainStat
+import com.example.inuit.data.Net
+import com.example.inuit.data.NetStore
 import com.example.inuit.data.PodcastDirectory
 import com.example.inuit.data.PodcastRec
 import com.example.inuit.data.QuestionStore
@@ -31,6 +33,7 @@ import kotlinx.coroutines.launch
 class PodcastRecommender(
     private val store: QuestionStore,
     private val settingsStore: SettingsStore,
+    private val netStore: NetStore,
     private val llm: LlmClient,
     private val scope: CoroutineScope
 ) {
@@ -67,6 +70,8 @@ class PodcastRecommender(
      * No-op when both are ready unless [force].
      */
     fun ensureRec(force: Boolean = false) {
+        val net = netStore.active()
+        if (!net.podcastEnabled) return // this net has podcasts turned off
         if (job?.isActive == true) return
         val needCurrent = force || !isFresh(store.currentPodcast())
         if (!needCurrent && store.podcastQueue().size >= STOCKPILE_TARGET) return
@@ -76,11 +81,15 @@ class PodcastRecommender(
             if (needCurrent) {
                 _loading.value = true
                 try {
-                    val rec = generate(s)
+                    val rec = generate(s, net)
                     if (rec != null) {
-                        store.setPodcast(rec)
-                        _rec.value = rec
-                        DebugLog.i(TAG, "recommended: ${rec.show} — ${rec.title} url=${rec.url != null}")
+                        if (store.activeNetId != net.id) {
+                            DebugLog.w(TAG, "net switched during recommendation — dropping it")
+                        } else {
+                            store.setPodcast(rec)
+                            _rec.value = rec
+                            DebugLog.i(TAG, "recommended: ${rec.show} — ${rec.title} url=${rec.url != null}")
+                        }
                     } else {
                         DebugLog.w(TAG, "model returned no usable recommendation")
                     }
@@ -90,8 +99,28 @@ class PodcastRecommender(
                     _loading.value = false
                 }
             }
-            topUpStockpile(s)
+            if (netStore.active().id == net.id && netStore.active().podcastEnabled) {
+                topUpStockpile(s, net)
+            }
         }
+    }
+
+    /**
+     * The active net changed (switch, create, delete, podcast toggle):
+     * re-read the new net's podcast state; a net with podcasts disabled
+     * shows nothing and keeps its store clean.
+     */
+    fun onNetChanged() {
+        val net = netStore.active()
+        if (!net.podcastEnabled) {
+            if (store.currentPodcast() != null) store.clearPodcast()
+            _rec.value = null
+            _history.value = emptyList()
+            return
+        }
+        _rec.value = store.currentPodcast()
+        _history.value = store.podcastSeen().asReversed()
+        ensureRec()
     }
 
     /** The shown episode was tapped: retire it, promote the next stockpiled
@@ -112,11 +141,12 @@ class PodcastRecommender(
     }
 
     /** Generates resolved spares until the stockpile reaches its target. */
-    private suspend fun topUpStockpile(s: AppSettings) {
+    private suspend fun topUpStockpile(s: AppSettings, net: Net) {
         var misses = 0
         while (store.podcastQueue().size < STOCKPILE_TARGET && misses < 2) {
+            if (netStore.active().id != net.id || !netStore.active().podcastEnabled) return
             val rec = try {
-                generate(s)
+                generate(s, net)
             } catch (e: Exception) {
                 DebugLog.e(TAG, "stockpile generation failed", e)
                 null
@@ -125,6 +155,7 @@ class PodcastRecommender(
                 misses++
                 continue
             }
+            if (store.activeNetId != net.id) return // net switched — stop stocking
             val before = store.podcastQueue().size
             store.enqueuePodcast(rec)
             if (store.podcastQueue().size == before) misses++ // dup dropped
@@ -142,7 +173,7 @@ class PodcastRecommender(
         else age < LINKLESS_STALE_MS
     }
 
-    private suspend fun generate(s: AppSettings): PodcastRec? {
+    private suspend fun generate(s: AppSettings, net: Net): PodcastRec? {
         val stats = store.snapshotDomainStats()
         val answers = store.snapshotAnswers()
         val questions = store.snapshotQuestions().associateBy { it.id }
@@ -190,7 +221,7 @@ class PodcastRecommender(
         val messages = ArrayList<LlmMessage>()
         messages.add(
             LlmMessage.user(
-                Prompts.podcastPrompt(weakLines, wrongLines, summaryLines, avoidLines, toolsAvailable = budget > 0)
+                Prompts.podcastPrompt(weakLines, wrongLines, summaryLines, avoidLines, toolsAvailable = budget > 0, net = net)
             )
         )
 

@@ -58,6 +58,7 @@ fun StatsPanel(
     podcastLoading: Boolean = false,
     podcastHistory: List<PodcastRec> = emptyList(),
     podcastAppConfigured: Boolean = true,
+    podcastEnabled: Boolean = true,
     onOpenPodcast: (PodcastRec) -> Unit = {},
     onOpenHistoryPodcast: (PodcastRec) -> Unit = {},
     onOpenSettings: () -> Unit = {}
@@ -65,7 +66,7 @@ fun StatsPanel(
     OverviewChips(stats, liveQueueSize)
     if (stats.totalAnswers == 0) {
         EmptyStatsCard()
-        PodcastCard(
+        if (podcastEnabled) PodcastCard(
             podcast, podcastLoading, podcastHistory, podcastAppConfigured,
             onOpenPodcast, onOpenHistoryPodcast, onOpenSettings
         )
@@ -80,7 +81,7 @@ fun StatsPanel(
     GrowthCard(stats)
     ProfileCard(stats)
     if (summaries.isNotEmpty()) KnowledgeStateCard(summaries)
-    PodcastCard(
+    if (podcastEnabled) PodcastCard(
         podcast, podcastLoading, podcastHistory, podcastAppConfigured,
         onOpenPodcast, onOpenHistoryPodcast, onOpenSettings
     )

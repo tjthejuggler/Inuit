@@ -3,6 +3,8 @@ package com.example.inuit.data.gen
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
 import com.example.inuit.data.KnowledgeSummary
+import com.example.inuit.data.Net
+import com.example.inuit.data.NetStore
 import com.example.inuit.data.QuestionStore
 import com.example.inuit.data.SettingsStore
 import com.example.inuit.data.llm.LlmClient
@@ -38,6 +40,7 @@ import java.time.ZoneId
 class QuestionGenerator(
     private val store: QuestionStore,
     private val settingsStore: SettingsStore,
+    private val netStore: NetStore,
     private val llm: LlmClient,
     private val harvester: Harvester,
     private val scope: CoroutineScope
@@ -77,9 +80,10 @@ class QuestionGenerator(
             val s = settingsStore.current()
             if (!s.llmConfigured) return@launch
             if (store.queueSize() >= s.queueThreshold) return@launch
-            DebugLog.i(TAG, "queue ${store.queueSize()} < threshold ${s.queueThreshold} — generating")
+            val net = netStore.active()
+            DebugLog.i(TAG, "net='${net.name}' queue ${store.queueSize()} < threshold ${s.queueThreshold} — generating")
             runGeneration(s)
-            topUpStockpile(s)
+            topUpStockpile(s, net)
         }
     }
 
@@ -92,8 +96,9 @@ class QuestionGenerator(
                 _state.value = GenState.Error("LLM not configured — set base URL and model in Settings")
                 return@launch
             }
+            val net = netStore.active()
             runGeneration(s)
-            topUpStockpile(s)
+            topUpStockpile(s, net)
         }
     }
 
@@ -102,7 +107,7 @@ class QuestionGenerator(
      * threshold, harvest bulk web trivia until it's reached (bounded rounds).
      * The user should never run out of questions.
      */
-    private suspend fun topUpStockpile(s: AppSettings) {
+    private suspend fun topUpStockpile(s: AppSettings, net: Net) {
         if (!s.harvestEnabled) return
         if (store.queueSize() >= s.queueThreshold) return
         val cfg = LlmConfig(s.baseUrl, s.apiKey, s.model)
@@ -113,7 +118,7 @@ class QuestionGenerator(
             _state.value = GenState.Running("Stockpiling trivia from the web (round $rounds)…")
             val target = minOf(HARVEST_TARGET_CAP, (s.queueThreshold - store.queueSize()).coerceAtLeast(20))
             val added = try {
-                harvester.harvestRound(cfg, s, target) { note ->
+                harvester.harvestRound(cfg, s, target, net) { note ->
                     _state.value = GenState.Running(note)
                 }
             } catch (e: java.io.IOException) {
@@ -178,8 +183,9 @@ class QuestionGenerator(
 
     private suspend fun attemptGenerationInner(s: AppSettings) {
         val startedAt = System.currentTimeMillis()
+            val net = netStore.active()
             _state.value = GenState.Running("Assembling context…")
-            val ctx = ContextBuilder(store).build()
+            val ctx = ContextBuilder(store).build(net)
             DebugLog.i(TAG, "context built: recent=${ctx.recentLines.size} unknownGroups=${ctx.unknownGroups.size} " +
                 "known=${ctx.knownLines.size} digest=${ctx.domainDigest.size} " +
                 "distant=${ctx.distantFrontiers.size} revisits=${ctx.revisitFrontiers.size}")
@@ -198,8 +204,8 @@ class QuestionGenerator(
             // ── tool loop ─────────────────────────────────────────────────
             val cfg = LlmConfig(s.baseUrl, s.apiKey, s.model)
             val messages = ArrayList<LlmMessage>()
-            messages.add(LlmMessage.system(Prompts.systemPrompt(s.mcpBudget)))
-            messages.add(LlmMessage.user(Prompts.userRequest(ctx, s.batchSize)))
+            messages.add(LlmMessage.system(Prompts.systemPrompt(s.mcpBudget, net)))
+            messages.add(LlmMessage.user(Prompts.userRequest(ctx, s.batchSize, net)))
 
             var finalContent: String? = null
             var round = 0
@@ -287,6 +293,14 @@ class QuestionGenerator(
                 return
             }
 
+            // The user may switch nets mid-generation; never file a batch
+            // into the wrong net's store.
+            if (store.activeNetId != net.id) {
+                DebugLog.w(TAG, "net switched during generation — discarding ${accepted.size} questions")
+                _state.value = GenState.Completed(0)
+                return
+            }
+
             store.insertQuestions(accepted)
             if (parsed.newFrontiers.isNotEmpty()) {
                 store.replaceFrontiers(store.snapshotFrontiers() + parsed.newFrontiers)
@@ -352,7 +366,7 @@ class QuestionGenerator(
     private suspend fun refreshSummaries(cfg: LlmConfig, s: AppSettings) {
         val answers = store.snapshotAnswers()
         if (answers.size < SUMMARY_MIN_ANSWERS) return
-        if (answers.size - s.summarizedAnswers < SUMMARY_INTERVAL) return
+        if (answers.size - store.summarizedAnswers() < SUMMARY_INTERVAL) return
 
         _state.value = GenState.Running("Updating knowledge summaries…")
         val questions = store.snapshotQuestions().associateBy { it.id }
@@ -390,7 +404,7 @@ class QuestionGenerator(
                 KnowledgeSummary(domain, text, now, answers.size)
             }
         )
-        settingsStore.setSummarizedAnswers(answers.size)
+        store.setSummarizedAnswers(answers.size)
         DebugLog.i(TAG, "knowledge summaries refreshed for ${parsed.size} domains")
     }
 }

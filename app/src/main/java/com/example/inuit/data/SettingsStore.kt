@@ -49,8 +49,6 @@ data class AppSettings(
     /** Top the stockpile up with bulk web-harvested trivia when low. */
     val harvestEnabled: Boolean = true,
     val mcpJson: String = DEFAULT_MCP_JSON,
-    /** Total answer count already covered by rolling summaries. */
-    val summarizedAnswers: Int = 0,
     /** Package of the podcast app that opens recommendations; blank = system default. */
     val podcastAppPackage: String = ""
 ) {
@@ -72,7 +70,6 @@ class SettingsStore(private val context: Context) {
         val MCP_BUDGET = intPreferencesKey("gen_mcp_budget")
         val HARVEST = booleanPreferencesKey("gen_harvest")
         val MCP_JSON = stringPreferencesKey("mcp_json")
-        val SUMMARIZED = intPreferencesKey("summarized_answers")
         val PODCAST_APP = stringPreferencesKey("podcast_app_package")
     }
 
@@ -90,7 +87,6 @@ class SettingsStore(private val context: Context) {
             mcpBudget = (p[K.MCP_BUDGET] ?: 3).coerceIn(0, 20),
             harvestEnabled = p[K.HARVEST] ?: true,
             mcpJson = p[K.MCP_JSON] ?: DEFAULT_MCP_JSON,
-            summarizedAnswers = p[K.SUMMARIZED] ?: 0,
             podcastAppPackage = p[K.PODCAST_APP] ?: ""
         )
     }
@@ -130,10 +126,6 @@ class SettingsStore(private val context: Context) {
 
     suspend fun saveMcpJson(json: String) {
         context.dataStore.edit { it[K.MCP_JSON] = json }
-    }
-
-    suspend fun setSummarizedAnswers(count: Int) {
-        context.dataStore.edit { it[K.SUMMARIZED] = count }
     }
 
     suspend fun setPodcastApp(pkg: String) {

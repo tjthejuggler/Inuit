@@ -2,6 +2,7 @@ package com.example.inuit.data.gen
 
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.KnowledgeSummary
+import com.example.inuit.data.Net
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -10,9 +11,24 @@ object Prompts {
 
     // ── Main generation ──────────────────────────────────────────────────
 
-    fun systemPrompt(mcpBudget: Int): String = """
-You are the question engine of Inuit, an app that trains human intuition with short questions spanning all human knowledge. You create batches of questions.
+    /** Intro + (for custom nets) the NET SCOPE block that pins every
+     *  question to the user-chosen slice of knowledge. */
+    private fun scopeIntro(net: Net?): String {
+        val intro = "You are the question engine of Inuit, an app that trains human intuition with short questions"
+        if (net == null || net.isAll) {
+            return "$intro spanning all human knowledge. You create batches of questions.\n"
+        }
+        val desc = net.description.ifBlank { net.name }
+        return """
+$intro. You create batches of questions.
 
+NET SCOPE — the user is training inside a net named "${net.name}", described as: $desc
+Every question must fall STRICTLY within this net's scope. Rule 4's breadth requirement applies WITHIN the net: spread across its subtopics, eras, methods, figures and neighboring facets the description allows. Rule 5's top-level domains must be meaningful subdivisions of the net's scope (e.g. "${net.name} > …"), not the broad realms of all knowledge. Never emit a question outside the net, however tempting.
+""".trimIndent() + "\n"
+    }
+
+    fun systemPrompt(mcpBudget: Int, net: Net? = null): String = """
+${scopeIntro(net)}
 ABSOLUTE RULES:
 1. FACTUAL RIGOR — anti-hallucination is the highest priority. Only emit questions whose correct answer you are CERTAIN of: stable, objectively verifiable facts you would stake your reputation on. If you are not sure, skip that question entirely. Never emit: opinions, contested claims, changing facts ("current champion"), ambiguous or trick phrasing, or anything you might be conflating with a similar fact.
 2. NEVER REVEAL — the app never shows answers or explanations to the user. Do not write prompts that contain their own answer. Do not add hints, explanations or elaborations to prompts. The "rationale" field is internal audit only.
@@ -51,7 +67,7 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
 }
 """.trim()
 
-    fun userRequest(ctx: ContextBuilder.Context, batchSize: Int): String {
+    fun userRequest(ctx: ContextBuilder.Context, batchSize: Int, net: Net? = null): String {
         val sb = StringBuilder()
         sb.append("== USER STATE ==\n")
         sb.append(ctx.totalsLine).append('\n')
@@ -100,8 +116,10 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         if (ctx.domainDigest.isEmpty()) sb.append("(no stats yet)\n")
         else ctx.domainDigest.forEach { sb.append(it).append('\n') }
 
-        sb.append("\n== DISTANT FRONTIERS (maximally unlike anything recent — novelty pressure; obscure fields welcome) ==\n")
-        ctx.distantFrontiers.forEach { sb.append("- ").append(it).append('\n') }
+        if (ctx.distantFrontiers.isNotEmpty()) {
+            sb.append("\n== DISTANT FRONTIERS (maximally unlike anything recent — novelty pressure; obscure fields welcome) ==\n")
+            ctx.distantFrontiers.forEach { sb.append("- ").append(it).append('\n') }
+        }
 
         if (ctx.revisitFrontiers.isNotEmpty()) {
             sb.append("\n== REVISIT (older threads worth circling back to from a new angle) ==\n")
@@ -195,8 +213,13 @@ Reply with a single JSON object, no fences: {"summaries": {"<domain>": "<summary
 
     // ── Bulk web harvest (stockpile mode) ────────────────────────────────
 
-    fun harvestSystemPrompt(toolBudget: Int): String = """
-You are the stockpile harvester of Inuit, a trivia app. Your job is VOLUME: use the provided web search / web reader tools (AT MOST $toolBudget CALLS TOTAL) to find large, reputable trivia question lists online, then convert what you actually found into Inuit's question format. These questions are NOT personalized — they are general-knowledge trivia for a stockpile, so no user context is given.
+    fun harvestSystemPrompt(toolBudget: Int, net: Net? = null): String {
+        val scope = if (net == null || net.isAll) "" else
+            "\nNET SCOPE — the stockpile belongs to the \"${net.name}\" net: ${net.description.ifBlank { net.name }}. " +
+                "Only harvest trivia that falls STRICTLY within this scope; general-knowledge lists outside it are useless here. " +
+                "Rule 6's variety applies across the net's subtopics.\n"
+        return """
+You are the stockpile harvester of Inuit, a trivia app. Your job is VOLUME: use the provided web search / web reader tools (AT MOST $toolBudget CALLS TOTAL) to find large, reputable trivia question lists online, then convert what you actually found into Inuit's question format. These questions are NOT personalized — they are for a stockpile, so no user context is given.$scope
 
 RULES:
 1. SOURCE-GROUNDED — only emit questions whose answer is clearly stated in the content you fetched. Do NOT invent questions from thin air in this mode; if a fetched page is thin, search again within budget. Skip anything ambiguous, opinion-based, time-sensitive ("current champion"), or contested.
@@ -226,6 +249,7 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
   "new_frontiers": ["Realm > Subrealm"]
 }
 """.trim()
+    }
 
     fun harvestUserPrompt(target: Int, themeHint: String, queued: Int): String = """
 == TASK ==
@@ -241,7 +265,8 @@ Prioritize breadth and volume. Every question must be answerable from what you a
         wrongLines: List<String>,
         summaryLines: List<String>,
         avoidLines: List<String>,
-        toolsAvailable: Boolean = false
+        toolsAvailable: Boolean = false,
+        net: Net? = null
     ): String = buildString {
         append("""
 You pick podcast episodes for Inuit, an intuition-training app. Below is what the user knows least. Recommend ONE specific, REAL podcast EPISODE that would best teach one of those weak areas.
@@ -264,6 +289,11 @@ Reply with a single JSON object, no markdown fences, no commentary:
                     "official episode URL, and to sanity-check that the episode exists. " +
                     "Prefer grounded URLs over memory.\n"
             )
+        }
+        if (net != null && !net.isAll) {
+            append("\n== NET SCOPE ==\n")
+            append("The user trains inside the \"${net.name}\" net: ${net.description.ifBlank { net.name }}. ")
+            append("Pick episodes strictly within this scope.\n")
         }
         append("\n\n== WEAKEST AREAS (domain — correct/attempts) ==\n")
         if (weakLines.isEmpty()) append("(no data yet — pick a famous, broadly enlightening episode)\n")

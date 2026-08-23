@@ -1,6 +1,7 @@
 package com.example.inuit
 
 import android.content.Context
+import com.example.inuit.data.NetStore
 import com.example.inuit.data.QuestionStore
 import com.example.inuit.data.SettingsStore
 import com.example.inuit.data.TailIntegration
@@ -17,10 +18,17 @@ class AppGraph(context: Context) {
     val appContext: Context = context.applicationContext
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settingsStore = SettingsStore(context)
-    val store = QuestionStore(context, appScope)
+    val netStore = NetStore(context, appScope)
+    val store = QuestionStore(context, appScope, netStore)
     val llm = LlmClient()
     val harvester = Harvester(store, llm)
-    val generator = QuestionGenerator(store, settingsStore, llm, harvester, appScope)
-    val podcasts = PodcastRecommender(store, settingsStore, llm, appScope)
+    val generator = QuestionGenerator(store, settingsStore, netStore, llm, harvester, appScope)
+    val podcasts = PodcastRecommender(store, settingsStore, netStore, llm, appScope)
     val tail = TailIntegration(context)
+
+    init {
+        // Net deletion → erase that net's question/answer/podcast file.
+        // (Callback instead of constructor arg to avoid a circular dependency.)
+        netStore.onNetDeleted = { store.deleteNetData(it) }
+    }
 }

@@ -2,6 +2,7 @@ package com.example.inuit.data.gen
 
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
+import com.example.inuit.data.Net
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionStore
 import com.example.inuit.data.llm.LlmClient
@@ -34,6 +35,7 @@ class Harvester(
         cfg: LlmConfig,
         s: AppSettings,
         target: Int,
+        net: Net? = null,
         onNote: (String) -> Unit
     ): Int {
         onNote("Connecting web tools…")
@@ -46,8 +48,14 @@ class Harvester(
         // ── tool loop: search + read, then convert ───────────────────────
         var budget = HARVEST_TOOL_BUDGET
         val messages = ArrayList<LlmMessage>()
-        messages.add(LlmMessage.system(Prompts.harvestSystemPrompt(HARVEST_TOOL_BUDGET)))
-        val theme = THEMES[rng.nextInt(THEMES.size)]
+        messages.add(LlmMessage.system(Prompts.harvestSystemPrompt(HARVEST_TOOL_BUDGET, net)))
+        // Custom nets always search within their scope; the All net rotates
+        // through general trivia themes for variety.
+        val theme = if (net != null && !net.isAll) {
+            ", ${net.name} trivia questions with answers"
+        } else {
+            THEMES[rng.nextInt(THEMES.size)]
+        }
         messages.add(LlmMessage.user(Prompts.harvestUserPrompt(target, theme, store.queueSize())))
 
         var finalContent: String? = null
@@ -107,6 +115,13 @@ class Harvester(
             }
         }
         if (accepted.isEmpty()) return 0
+
+        // The user may switch nets mid-harvest; never file a batch into the
+        // wrong net's store.
+        if (net != null && store.activeNetId != net.id) {
+            DebugLog.w(TAG, "net switched during harvest — discarding ${accepted.size} questions")
+            return 0
+        }
 
         store.insertQuestions(accepted)
         if (parsed.newFrontiers.isNotEmpty()) {

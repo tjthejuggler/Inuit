@@ -116,6 +116,9 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // ── Nets ────────────────────────────────────────────────────────
+            NetsSection(viewModel)
+
             // ── LLM ───────────────────────────────────────────────────────
             SectionCard(title = "LLM", subtitle = "any OpenAI-compatible endpoint") {
                 OutlinedTextField(
