@@ -17,16 +17,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -296,58 +290,6 @@ private fun ChoiceButton(
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = androidx.compose.ui.text.style.TextAlign.Left,
             modifier = Modifier.weight(1f, fill = false)
-        )
-    }
-}
-
-// ── collapsed form ────────────────────────────────────────────────────────
-
-/** Collapsed one-line form of the question card (stats browsing mode). */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun CollapsedQuestionBar(
-    question: Question?,
-    onExpand: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize(),
-        onClick = onExpand,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-        ) {
-            TypeChip(question?.type ?: QuestionType.MULTIPLE_CHOICE)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                question?.prompt ?: "Tap for the next question",
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Icon(
-                Icons.Default.KeyboardArrowDown,
-                contentDescription = "Expand question",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-/** Header row shown above the expanded card (collapse toggle). */
-@Composable
-fun CollapseToggle(collapsed: Boolean, onToggle: () -> Unit) {
-    IconButton(onClick = onToggle) {
-        Icon(
-            if (collapsed) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-            contentDescription = if (collapsed) "Expand question" else "Collapse question",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

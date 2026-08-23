@@ -101,16 +101,27 @@ class QuestionStore(
     val activeNetId: String get() = activeId
 
     /** Swaps the active net: flushes the old state to its file, loads the
-     *  new one (first switch loads it from disk), ticks [dataVersion]. */
+     *  new one (first switch loads it from disk), ticks [dataVersion].
+     *
+     *  Called SYNCHRONOUSLY by NetStore (via its onNetChanged hook) before
+     *  the activeNet flow publishes — so every consumer reacting to the
+     *  switch already sees this net active. The async collector in [init]
+     *  stays wired as an idempotent safety net. The incoming net must load
+     *  inline (its data is read immediately afterwards); the outgoing flush
+     *  is offloaded to IO because this now runs on the main thread. */
     fun switchNet(netId: String) {
+        var outgoing: Pair<String, JSONObject>? = null
         val changed = synchronized(lock) {
             if (netId == activeId) return
-            writeStateLocked(activeId, activeState()) // flush outgoing net
+            outgoing = activeId to serializeState(activeState()) // snapshot outgoing net
             activeId = netId
             activeState() // load incoming net if not cached
             true
         }
         if (changed) {
+            outgoing?.let { (id, payload) ->
+                scope.launch(Dispatchers.IO) { writePayload(id, payload) }
+            }
             Log.i(TAG, "switched to net $netId")
             bump()
         }
@@ -338,10 +349,6 @@ class QuestionStore(
         } catch (e: Exception) {
             Log.e(TAG, "persist failed", e)
         }
-    }
-
-    private fun writeStateLocked(netId: String, state: NetState) {
-        writePayload(netId, serializeState(state))
     }
 
     private fun serializeState(st: NetState): JSONObject = JSONObject().apply {

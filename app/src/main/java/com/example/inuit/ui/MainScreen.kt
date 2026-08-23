@@ -29,7 +29,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -57,9 +56,9 @@ import com.example.inuit.ui.theme.Rose
 import com.example.inuit.ui.theme.Teal
 
 /**
- * Main screen: a collapsible question card pinned on top; everything below
- * is the stats/knowledge-map scroll. Stats are session-frozen (blind
- * training): they refresh only when the user returns to the app.
+ * Main screen: the question card pinned on top; everything below is the
+ * stats/knowledge-map scroll. Stats are session-frozen (blind training):
+ * they refresh only when the user returns to the app.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,7 +70,6 @@ fun MainScreen(
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val summaries by viewModel.knowledgeSummaries.collectAsStateWithLifecycle()
     val genState by viewModel.genState.collectAsStateWithLifecycle()
-    val collapsed by viewModel.questionCollapsed.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val queueSize by viewModel.queueSize.collectAsStateWithLifecycle()
     val nets by viewModel.nets.collectAsStateWithLifecycle()
@@ -130,39 +128,16 @@ fun MainScreen(
             item(key = "question") {
                 val q = question
                 if (q != null) {
-                    if (collapsed) {
-                        Column {
-                            CollapsedQuestionBar(
-                                question = q,
-                                onExpand = { viewModel.setCollapsed(false) }
-                            )
-                            if (genState is GenState.Running || genState is GenState.Error) {
-                                Spacer(Modifier.height(6.dp))
-                                GenerationStatusChip(genState)
-                            }
-                        }
-                    } else {
-                        Column {
-                            QuestionCard(
-                                question = q,
-                                onSubmit = viewModel::submitAnswer,
-                                onSkip = viewModel::skip
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                // Generation progress / errors sit below the
-                                // question, on the left.
-                                if (genState is GenState.Running || genState is GenState.Error) {
-                                    GenerationStatusChip(genState)
-                                }
-                                Spacer(Modifier.weight(1f))
-                                OutlinedButton(onClick = { viewModel.setCollapsed(true) }) {
-                                    Text("Collapse · browse stats")
-                                }
-                            }
+                    Column {
+                        QuestionCard(
+                            question = q,
+                            onSubmit = viewModel::submitAnswer,
+                            onSkip = viewModel::skip
+                        )
+                        // Generation progress / errors sit below the question.
+                        if (genState is GenState.Running || genState is GenState.Error) {
+                            Spacer(Modifier.height(6.dp))
+                            GenerationStatusChip(genState)
                         }
                     }
                 } else {

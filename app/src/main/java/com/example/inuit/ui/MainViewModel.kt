@@ -53,14 +53,6 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     private val _currentQuestion = MutableStateFlow<Question?>(null)
     val currentQuestion: StateFlow<Question?> = _currentQuestion.asStateFlow()
 
-    /** Shown when the question card is collapsed. */
-    private val _questionCollapsed = MutableStateFlow(false)
-    val questionCollapsed: StateFlow<Boolean> = _questionCollapsed.asStateFlow()
-
-    fun setCollapsed(collapsed: Boolean) {
-        _questionCollapsed.value = collapsed
-    }
-
     init {
         // Restore the persisted on-screen question first: a question shown
         // but never answered must NEVER be wasted by closing the app.

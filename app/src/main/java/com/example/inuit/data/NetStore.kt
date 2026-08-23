@@ -116,6 +116,18 @@ class NetStore(
     /** Set by AppGraph: drops the deleted net's data file from QuestionStore. */
     var onNetDeleted: ((String) -> Unit)? = null
 
+    /**
+     * Set by AppGraph: synchronously switches QuestionStore to the new net.
+     * Invoked INSIDE the lock and BEFORE the [activeNet] flow publishes, so
+     * every collector that reacts to the switch (MainViewModel, generator,
+     * podcasts) already sees the store operating on the new net. Without
+     * this, the store's own async collector races the ViewModel's — the
+     * ViewModel could read the outgoing net's pending question (a new net
+     * showed All's questions) or write a null pending into the wrong net
+     * (All got stuck on "generating questions").
+     */
+    var onNetChanged: ((String) -> Unit)? = null
+
     init {
         load()
     }
@@ -127,6 +139,7 @@ class NetStore(
         synchronized(lock) {
             val net = _nets.value.firstOrNull { it.id == id } ?: return
             if (net.id == _activeNet.value.id) return
+            onNetChanged?.invoke(net.id) // store must switch before anyone observes it
             _activeNet.value = net
             persist()
         }
@@ -145,6 +158,7 @@ class NetStore(
         synchronized(lock) {
             if (_nets.value.size >= MAX_NETS) return null
             _nets.value = _nets.value + net
+            onNetChanged?.invoke(net.id) // store must switch before anyone observes it
             _activeNet.value = net
             persist()
         }
@@ -182,6 +196,7 @@ class NetStore(
             val exists = _nets.value.any { it.id == id }
             if (!exists) return
             if (_activeNet.value.id == id) {
+                onNetChanged?.invoke(Net.ALL_ID) // store off the doomed net before we publish
                 _activeNet.value = _nets.value.first { it.isAll }
             }
             _nets.value = _nets.value.filter { it.id != id }

@@ -77,13 +77,22 @@ class QuestionGenerator(
     fun maybeGenerate() {
         if (genJob?.isActive == true) return
         genJob = scope.launch {
-            val s = settingsStore.current()
-            if (!s.llmConfigured) return@launch
-            if (store.queueSize() >= s.queueThreshold) return@launch
-            val net = netStore.active()
-            DebugLog.i(TAG, "net='${net.name}' queue ${store.queueSize()} < threshold ${s.queueThreshold} — generating")
-            runGeneration(s)
-            topUpStockpile(s, net)
+            // Self-draining loop: each pass re-checks the ACTIVE net's queue.
+            // A net switch mid-batch discards the in-flight work (net guard in
+            // attemptGenerationInner) — without this loop the newly active net
+            // would never get its own generation kicked and could sit empty
+            // forever. Error states exit here; the 60s auto-retry scheduled
+            // by runGeneration owns the comeback.
+            while (true) {
+                val s = settingsStore.current()
+                if (!s.llmConfigured) return@launch
+                if (store.queueSize() >= s.queueThreshold) return@launch
+                val net = netStore.active()
+                DebugLog.i(TAG, "net='${net.name}' queue ${store.queueSize()} < threshold ${s.queueThreshold} — generating")
+                runGeneration(s)
+                topUpStockpile(s, net)
+                if (_state.value is GenState.Error) return@launch
+            }
         }
     }
 

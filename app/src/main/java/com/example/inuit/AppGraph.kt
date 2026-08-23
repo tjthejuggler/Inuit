@@ -27,8 +27,13 @@ class AppGraph(context: Context) {
     val tail = TailIntegration(context)
 
     init {
-        // Net deletion → erase that net's question/answer/podcast file.
+        // Net switch → swap QuestionStore's active state SYNCHRONOUSLY, before
+        // NetStore publishes the new activeNet. Every consumer reacting to the
+        // switch (ViewModel, generator, podcasts) then sees the right net's
+        // data; the store's own async collector would race them.
         // (Callback instead of constructor arg to avoid a circular dependency.)
+        netStore.onNetChanged = { store.switchNet(it) }
+        // Net deletion → erase that net's question/answer/podcast file.
         netStore.onNetDeleted = { store.deleteNetData(it) }
     }
 }
