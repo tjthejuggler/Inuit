@@ -148,8 +148,12 @@ class QuestionStore(
     }
 
     /** Active state, loading it from disk on first access. Call under [lock]. */
-    private fun activeState(): NetState =
-        netStates.getOrPut(activeId) { loadState(activeId) }
+    private fun activeState(): NetState = stateFor(activeId)
+
+    /** Any net's state, loading it from disk on first access (cross-net
+     *  accent reads). Call under [lock]. */
+    private fun stateFor(netId: String): NetState =
+        netStates.getOrPut(netId) { loadState(netId) }
 
     // ── Reads (active net) ───────────────────────────────────────────────
 
@@ -176,6 +180,23 @@ class QuestionStore(
     fun queue(): List<Question> = synchronized(lock) { activeState().questions.filter { it.servedCount == 0 } }
 
     fun queueSize(): Int = synchronized(lock) { activeState().questions.count { it.servedCount == 0 } }
+
+    // ── Reads (other nets — cross-net generation accents) ────────────────
+    // These power the "sprinkle in knowledge from other nets" option: the
+    // generator peeks at the SOURCE nets' knowledge base while every write
+    // still targets the active net. States load lazily and stay cached.
+
+    fun snapshotSummariesFor(netId: String): List<KnowledgeSummary> =
+        synchronized(lock) { stateFor(netId).summaries.values.toList() }
+
+    fun snapshotDomainStatsFor(netId: String): List<DomainStat> =
+        synchronized(lock) { stateFor(netId).domainStats.values.toList() }
+
+    fun snapshotQuestionsFor(netId: String): List<Question> =
+        synchronized(lock) { stateFor(netId).questions.toList() }
+
+    fun snapshotAnswersFor(netId: String): List<AnswerRecord> =
+        synchronized(lock) { stateFor(netId).answers.toList() }
 
     // ── Writes (active net) ──────────────────────────────────────────────
 

@@ -31,6 +31,16 @@ data class Net(
     /** Podcast recommendations can be disabled per net (some scopes have
      *  no meaningful podcast coverage). */
     val podcastEnabled: Boolean = true,
+    /** Occasional accent: sprinkle in questions tied to the phone's current
+     *  location (region history/geography). Needs the location permission. */
+    val locationEnabled: Boolean = false,
+    /** Occasional accent: sprinkle in questions tied to the current date
+     *  (today, this date in history, this year in past centuries). */
+    val dateEnabled: Boolean = false,
+    /** Occasional accent: other nets whose knowledge base (summaries, weak
+     *  domains, missed questions) may season this net's questions. The user
+     *  picks these; a net never sources itself. */
+    val sourceNetIds: List<String> = emptyList(),
     val createdAt: Long = System.currentTimeMillis()
 ) {
     val isAll: Boolean get() = id == ALL_ID
@@ -40,6 +50,9 @@ data class Net(
         put("name", name)
         put("description", description)
         put("podcast", podcastEnabled)
+        put("loc", locationEnabled)
+        put("date", dateEnabled)
+        put("srcNets", JSONArray(sourceNetIds))
         put("ts", createdAt)
     }
 
@@ -54,6 +67,9 @@ data class Net(
             name = o.optString("name").trim().ifEmpty { "Net" },
             description = o.optString("description"),
             podcastEnabled = o.optBoolean("podcast", true),
+            locationEnabled = o.optBoolean("loc", false),
+            dateEnabled = o.optBoolean("date", false),
+            sourceNetIds = o.optJSONArray("srcNets").toStringList().filter { it.isNotBlank() },
             createdAt = o.optLong("ts", 0L)
         )
     }
@@ -146,36 +162,51 @@ class NetStore(
     }
 
     /**
-     * Creates a net and makes it active immediately — a brand-new net starts
-     * empty (no questions, no stats, no podcasts) with zero carryover.
+     * Creates a net (from a UI draft) and makes it active immediately — a
+     * brand-new net starts empty (no questions, no stats, no podcasts) with
+     * zero carryover. Source-net ids are validated against existing nets.
      */
-    fun createNet(name: String, description: String, podcastEnabled: Boolean): Net? {
-        val net = Net(
-            name = name.trim().ifEmpty { return null },
-            description = description.trim(),
-            podcastEnabled = podcastEnabled
-        )
+    fun createNet(draft: Net): Net? {
+        if (draft.name.trim().isEmpty()) return null
         synchronized(lock) {
             if (_nets.value.size >= MAX_NETS) return null
+            val known = _nets.value.mapTo(HashSet()) { it.id }
+            val net = draft.copy(
+                name = draft.name.trim(),
+                description = draft.description.trim(),
+                sourceNetIds = draft.sourceNetIds.filter { it != draft.id && it in known }.distinct()
+            )
             _nets.value = _nets.value + net
             onNetChanged?.invoke(net.id) // store must switch before anyone observes it
             _activeNet.value = net
             persist()
+            return net
         }
-        return net
     }
 
-    /** Updates name/description/podcast flag of an existing net. */
+    /** Updates an existing net. The All net may only toggle podcasts and
+     *  accents (no rename/re-scope); user nets are fully editable. */
     fun updateNet(net: Net) {
         synchronized(lock) {
+            val known = _nets.value.mapTo(HashSet()) { it.id }
+            val sources = net.sourceNetIds.filter { it != net.id && it in known }.distinct()
             if (net.isAll) {
-                // The All net may only toggle podcasts / description, not rename.
                 _nets.value = _nets.value.map {
-                    if (it.isAll) it.copy(podcastEnabled = net.podcastEnabled) else it
+                    if (it.isAll) it.copy(
+                        podcastEnabled = net.podcastEnabled,
+                        locationEnabled = net.locationEnabled,
+                        dateEnabled = net.dateEnabled,
+                        sourceNetIds = sources
+                    ) else it
                 }
             } else {
                 _nets.value = _nets.value.map {
-                    if (it.id == net.id) net.copy(name = net.name.trim().ifEmpty { it.name }) else it
+                    if (it.id == net.id) {
+                        net.copy(
+                            name = net.name.trim().ifEmpty { it.name },
+                            sourceNetIds = sources
+                        )
+                    } else it
                 }
             }
             if (_activeNet.value.id == net.id) {
@@ -199,7 +230,10 @@ class NetStore(
                 onNetChanged?.invoke(Net.ALL_ID) // store off the doomed net before we publish
                 _activeNet.value = _nets.value.first { it.isAll }
             }
-            _nets.value = _nets.value.filter { it.id != id }
+            _nets.value = _nets.value
+                .filter { it.id != id }
+                // Other nets must not keep referencing the deleted net as a source.
+                .map { n -> if (id in n.sourceNetIds) n.copy(sourceNetIds = n.sourceNetIds - id) else n }
             persist()
         }
         onNetDeleted?.invoke(id)

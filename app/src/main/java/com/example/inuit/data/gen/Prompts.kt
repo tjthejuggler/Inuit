@@ -67,7 +67,12 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
 }
 """.trim()
 
-    fun userRequest(ctx: ContextBuilder.Context, batchSize: Int, net: Net? = null): String {
+    fun userRequest(
+        ctx: ContextBuilder.Context,
+        batchSize: Int,
+        net: Net? = null,
+        accents: NetAccents? = null
+    ): String {
         val sb = StringBuilder()
         sb.append("== USER STATE ==\n")
         sb.append(ctx.totalsLine).append('\n')
@@ -126,6 +131,27 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
             ctx.revisitFrontiers.forEach { sb.append("- ").append(it).append('\n') }
         }
 
+        val cap = if (accents == null || accents.isEmpty) 0 else accentQuestionCap(batchSize)
+        if (cap > 0) {
+            sb.append("\n== OCCASIONAL ACCENTS (seasoning, not the meal — STRICT DOSAGE) ==\n")
+            sb.append("Optional flavors for this batch. The net's own scope and the task below ALWAYS dominate. ")
+                .append("Use at most ONE question per accent below and NEVER more than $cap accent question(s) total. ")
+                .append("If an accent does not fit the net's scope naturally, skip it entirely — a forced accent is worse than none.\n")
+            accents!!.locationLine?.let {
+                sb.append("- LOCATION: $it — a question tied to that region (its history, geography, science, notable people/events) ")
+                    .append("that still fits this net's scope; if no honest connection exists, skip.\n")
+            }
+            if (accents.dateLines.isNotEmpty()) {
+                sb.append("- DATE: ").append(accents.dateLines.joinToString(" · ")).append('\n')
+                sb.append("  → a question whose answer is anchored to today's date, this date in history, or one of those past years.\n")
+            }
+            if (accents.crossNetLines.isNotEmpty()) {
+                sb.append("- OTHER NETS (the user also trains in these; their knowledge there can anchor a bridge question):\n")
+                accents.crossNetLines.forEach { sb.append(it).append('\n') }
+                sb.append("  → anchor at most one question in something they know/missed there — but the question itself must stay STRICTLY inside this net's scope (a bridge, not a departure).\n")
+            }
+        }
+
         val subCount = if (ctx.unknownGroups.isEmpty()) 0 else (batchSize * 0.4).toInt().coerceAtLeast(3)
         sb.append(
             "\n== TASK ==\nGenerate ").append(batchSize).append(" questions: ")
@@ -143,6 +169,9 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         }
         sb.append("Use all four types (at least 2 questions per type). ")
         sb.append("Include at least 2 obscure-but-certain questions (statistics, magnitudes, records). ")
+        if (cap > 0) {
+            sb.append("You MAY draw up to $cap question(s) from the OCCASIONAL ACCENTS section — never more. ")
+        }
         if (ctx.noviceDomains.isNotEmpty()) {
             sb.append("For every NOVICE DOMAIN (and any domain where a recent wrong answer was off-category), ")
                 sb.append("include at least 2 easy recognition questions (difficulty 1-2, multiple_choice or true_false) ")

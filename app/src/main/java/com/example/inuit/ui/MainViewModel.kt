@@ -101,9 +101,10 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         graph.netStore.setActive(id)
     }
 
-    /** Settings: create a net (name + scope description + podcast toggle). */
-    fun createNet(name: String, description: String, podcastEnabled: Boolean) {
-        graph.netStore.createNet(name, description, podcastEnabled)
+    /** Settings: create a net from the edit dialog's draft (name, scope,
+     *  podcast toggle + the occasional-accent options). */
+    fun createNet(draft: Net) {
+        graph.netStore.createNet(draft)
             ?: return // blank name or cap reached — UI validates beforehand
     }
 

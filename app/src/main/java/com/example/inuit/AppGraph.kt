@@ -5,7 +5,9 @@ import com.example.inuit.data.NetStore
 import com.example.inuit.data.QuestionStore
 import com.example.inuit.data.SettingsStore
 import com.example.inuit.data.TailIntegration
+import com.example.inuit.data.gen.AccentsBuilder
 import com.example.inuit.data.gen.Harvester
+import com.example.inuit.data.gen.LocationProvider
 import com.example.inuit.data.gen.PodcastRecommender
 import com.example.inuit.data.gen.QuestionGenerator
 import com.example.inuit.data.llm.LlmClient
@@ -22,7 +24,8 @@ class AppGraph(context: Context) {
     val store = QuestionStore(context, appScope, netStore)
     val llm = LlmClient()
     val harvester = Harvester(store, llm)
-    val generator = QuestionGenerator(store, settingsStore, netStore, llm, harvester, appScope)
+    val accents = AccentsBuilder(LocationProvider(appContext), netStore, store)
+    val generator = QuestionGenerator(store, settingsStore, netStore, llm, harvester, accents, appScope)
     val podcasts = PodcastRecommender(store, settingsStore, netStore, llm, appScope)
     val tail = TailIntegration(context)
 

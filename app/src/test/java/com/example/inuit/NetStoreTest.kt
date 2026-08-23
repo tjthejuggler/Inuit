@@ -15,7 +15,12 @@ class NetStoreTest {
     fun `serialize then parse round-trips nets and active id`() {
         val nets = listOf(
             Net.ALL,
-            Net(id = "j1", name = "Juggling", description = "All aspects of juggling", podcastEnabled = false, createdAt = 42L)
+            Net(
+                id = "j1", name = "Juggling", description = "All aspects of juggling",
+                podcastEnabled = false, createdAt = 42L,
+                locationEnabled = true, dateEnabled = true,
+                sourceNetIds = listOf(Net.ALL_ID, "h2")
+            )
         )
         val text = NetStore.serialize("j1", nets)
         val (active, parsed) = NetStore.parse(text)
@@ -26,6 +31,9 @@ class NetStoreTest {
         assertEquals("Juggling", parsed[1].name)
         assertEquals("All aspects of juggling", parsed[1].description)
         assertFalse(parsed[1].podcastEnabled)
+        assertTrue(parsed[1].locationEnabled)
+        assertTrue(parsed[1].dateEnabled)
+        assertEquals(listOf(Net.ALL_ID, "h2"), parsed[1].sourceNetIds)
         assertEquals(42L, parsed[1].createdAt)
     }
 
@@ -51,13 +59,29 @@ class NetStoreTest {
 
     @Test
     fun `net json round-trips through fromJson`() {
-        val net = Net(id = "n9", name = "  Bread  ", description = "Baking science", podcastEnabled = false, createdAt = 7L)
+        val net = Net(
+            id = "n9", name = "  Bread  ", description = "Baking science",
+            podcastEnabled = false, createdAt = 7L,
+            locationEnabled = true, dateEnabled = true, sourceNetIds = listOf("a", "b")
+        )
         val copy = Net.fromJson(net.toJson())
         assertEquals("n9", copy.id)
         assertEquals("Bread", copy.name) // trimmed
         assertEquals("Baking science", copy.description)
         assertFalse(copy.podcastEnabled)
+        assertTrue(copy.locationEnabled)
+        assertTrue(copy.dateEnabled)
+        assertEquals(listOf("a", "b"), copy.sourceNetIds)
         assertEquals(7L, copy.createdAt)
+    }
+
+    @Test
+    fun `legacy net json without accent keys parses with defaults`() {
+        val legacy = """{"id":"old","name":"Ancient","description":"","podcast":true,"ts":1}"""
+        val net = Net.fromJson(org.json.JSONObject(legacy))
+        assertFalse(net.locationEnabled)
+        assertFalse(net.dateEnabled)
+        assertTrue(net.sourceNetIds.isEmpty())
     }
 
     @Test

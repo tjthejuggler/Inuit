@@ -288,8 +288,10 @@ private fun ChoiceButton(
             text,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Left,
-            modifier = Modifier.weight(1f, fill = false)
+            textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+            // Fill the remaining width so the option text starts at the left
+            // edge instead of floating centered inside the button.
+            modifier = Modifier.weight(1f)
         )
     }
 }

@@ -137,6 +137,31 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-23 (10)** — **Occasional accents (location / date / cross-net).**
+  Each net — including the All net, which gained an edit button in
+  Settings → Nets (its dialog hides the fixed name/scope and offers
+  podcasts + accents only) — can now switch on three optional "seasonings"
+  from its edit dialog: **Location accents** (questions tied to the
+  phone's current region — coarse location + reverse geocoding, permission
+  requested when the toggle flips on, graceful fallback to rounded
+  coordinates and silent skip when unavailable/stale >30 days), **Date
+  accents** (today's weekday/day-of-year, an on-this-day-in-history angle,
+  same-year-in-past-centuries anniversaries, and a hemisphere-correct
+  season line that reuses the location fix), and **Pull knowledge from
+  other nets** (user-picked source nets, max 3: their rolling knowledge
+  summaries, weakest domains and recently missed question prompts season
+  the current net's questions — a bridge, never a departure, since accent
+  questions must still fit the net's scope). Strict dosage by design: a
+  dedicated "OCCASIONAL ACCENTS" prompt block allows at most ONE question
+  per accent and hard-caps accent questions at ⌈batch/6⌉ ≤ 3, with an
+  explicit "skip if it doesn't fit the net's scope" rule; the net's own
+  material always dominates. Deleting a net prunes it from other nets'
+  source lists; `updateNet` validates source ids against the registry;
+  legacy `inuit_nets.json` entries parse with accents off. Multiple-choice
+  option text is now left-aligned (it fills the button width instead of
+  floating centered). 86 unit tests (10 new: date/anniversary/season
+  rendering, cross-net line assembly, missed-prompt extraction, dosage
+  cap, net JSON round-trips).
 - **2026-08-23 (9)** — **Nets.** Every feature now lives inside a *net* — a
   scoped question universe. The built-in **All** net is the app exactly as
   it was (all pre-nets data migrated into it for free: it keeps the legacy

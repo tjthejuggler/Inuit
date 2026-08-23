@@ -43,6 +43,7 @@ class QuestionGenerator(
     private val netStore: NetStore,
     private val llm: LlmClient,
     private val harvester: Harvester,
+    private val accents: AccentsBuilder,
     private val scope: CoroutineScope
 ) {
     companion object {
@@ -195,9 +196,19 @@ class QuestionGenerator(
             val net = netStore.active()
             _state.value = GenState.Running("Assembling context…")
             val ctx = ContextBuilder(store).build(net)
+            // Occasional accents (location / date / other nets) — off by default,
+            // strictly dosed; every failure inside degrades to "no accent".
+            val netAccents = try {
+                accents.build(net)
+            } catch (e: Exception) {
+                DebugLog.w(TAG, "accent build failed (continuing without): ${e.message}")
+                NetAccents()
+            }
             DebugLog.i(TAG, "context built: recent=${ctx.recentLines.size} unknownGroups=${ctx.unknownGroups.size} " +
                 "known=${ctx.knownLines.size} digest=${ctx.domainDigest.size} " +
-                "distant=${ctx.distantFrontiers.size} revisits=${ctx.revisitFrontiers.size}")
+                "distant=${ctx.distantFrontiers.size} revisits=${ctx.revisitFrontiers.size} " +
+                "accents(loc=${netAccents.locationLine != null} date=${netAccents.dateLines.size} " +
+                "crossNet=${netAccents.crossNetLines.size})")
 
             // ── MCP tools (budgeted) ──────────────────────────────────────
             var budget = s.mcpBudget
@@ -214,7 +225,7 @@ class QuestionGenerator(
             val cfg = LlmConfig(s.baseUrl, s.apiKey, s.model)
             val messages = ArrayList<LlmMessage>()
             messages.add(LlmMessage.system(Prompts.systemPrompt(s.mcpBudget, net)))
-            messages.add(LlmMessage.user(Prompts.userRequest(ctx, s.batchSize, net)))
+            messages.add(LlmMessage.user(Prompts.userRequest(ctx, s.batchSize, net, netAccents)))
 
             var finalContent: String? = null
             var round = 0

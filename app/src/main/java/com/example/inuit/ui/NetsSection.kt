@@ -1,20 +1,26 @@
 package com.example.inuit.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,9 +38,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.inuit.data.Net
 
@@ -43,6 +51,10 @@ import com.example.inuit.data.Net
  * universe (questions, stats, knowledge map, podcast recommendations);
  * LLM/MCP/generation settings are shared globally. The All net owns all
  * pre-nets data and cannot be renamed or deleted.
+ *
+ * Each net can also switch on OCCASIONAL ACCENTS — location, date, and
+ * knowledge pulled from other nets — that lightly season its questions
+ * without leaving its scope.
  */
 @Composable
 fun NetsSection(viewModel: MainViewModel) {
@@ -61,13 +73,10 @@ fun NetsSection(viewModel: MainViewModel) {
             NetRow(
                 net = net,
                 isActive = net.id == activeNet.id,
-                // The All net's scope is fixed ("all knowledge") — only its
-                // podcast toggle is editable; user nets are fully editable.
-                onEdit = if (net.isAll) null else { { editing = net } },
-                onDelete = if (net.isAll) null else { { confirmingDelete = net } },
-                onTogglePodcasts = { enabled ->
-                    viewModel.updateNet(net.copy(podcastEnabled = enabled))
-                }
+                // Every net is editable; the All net's dialog hides name /
+                // scope (they are fixed) and offers podcasts + accents only.
+                onEdit = { editing = net },
+                onDelete = if (net.isAll) null else { { confirmingDelete = net } }
             )
         }
         OutlinedButton(onClick = { creating = true }) {
@@ -87,23 +96,23 @@ fun NetsSection(viewModel: MainViewModel) {
         NetEditDialog(
             title = "New net",
             initial = null,
+            otherNets = nets,
             onDismiss = { creating = false },
-            onSave = { name, description, podcastEnabled ->
+            onSave = { draft ->
                 creating = false
-                viewModel.createNet(name, description, podcastEnabled)
+                viewModel.createNet(draft)
             }
         )
     }
     editing?.let { net ->
         NetEditDialog(
-            title = "Edit net",
+            title = if (net.isAll) "Edit All net" else "Edit net",
             initial = net,
+            otherNets = nets.filter { it.id != net.id },
             onDismiss = { editing = null },
-            onSave = { name, description, podcastEnabled ->
+            onSave = { draft ->
                 editing = null
-                viewModel.updateNet(
-                    net.copy(name = name, description = description, podcastEnabled = podcastEnabled)
-                )
+                viewModel.updateNet(draft)
             }
         )
     }
@@ -135,8 +144,7 @@ private fun NetRow(
     net: Net,
     isActive: Boolean,
     onEdit: (() -> Unit)?,
-    onDelete: (() -> Unit)?,
-    onTogglePodcasts: (Boolean) -> Unit
+    onDelete: (() -> Unit)?
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -168,16 +176,6 @@ private fun NetRow(
                 )
             }
         }
-        Text(
-            "Podcasts",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Switch(
-            checked = net.podcastEnabled,
-            onCheckedChange = onTogglePodcasts,
-            modifier = Modifier.padding(horizontal = 4.dp)
-        )
         if (onEdit != null) {
             IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
                 Icon(
@@ -201,46 +199,87 @@ private fun NetRow(
     }
 }
 
-/** Create / edit dialog: name, scope description, podcast toggle. */
+/** Max source nets the generator reads accents from (matches AccentsBuilder). */
+private const val MAX_SOURCE_NETS = 3
+
+/**
+ * Create / edit dialog: name, scope description, podcast toggle and the
+ * occasional accents (location / date / other nets). Returns a full [Net]
+ * draft; the caller persists it.
+ */
 @Composable
 private fun NetEditDialog(
     title: String,
     initial: Net?,
+    otherNets: List<Net>,
     onDismiss: () -> Unit,
-    onSave: (name: String, description: String, podcastEnabled: Boolean) -> Unit
+    onSave: (Net) -> Unit
 ) {
+    val isAll = initial?.isAll == true
     var name by rememberSaveable { mutableStateOf(initial?.name ?: "") }
     var description by rememberSaveable { mutableStateOf(initial?.description ?: "") }
     var podcastEnabled by rememberSaveable { mutableStateOf(initial?.podcastEnabled ?: true) }
+    var locationEnabled by rememberSaveable { mutableStateOf(initial?.locationEnabled ?: false) }
+    var dateEnabled by rememberSaveable { mutableStateOf(initial?.dateEnabled ?: false) }
+    // Set<String> isn't Bundle-saveable; keep the selection as a CSV of ids.
+    var sourceIdsCsv by rememberSaveable {
+        mutableStateOf(initial?.sourceNetIds?.joinToString(",") ?: "")
+    }
+    val selectedSources = sourceIdsCsv.split(',').filter { it.isNotBlank() }
+
+    val context = LocalContext.current
+    // Optimistically flip the toggle on; the callback reverts it if denied.
+    val locationPermission = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted: Boolean -> if (!granted) locationEnabled = false }
+
+    fun toggleSource(id: String) {
+        val current = selectedSources.toMutableList()
+        if (id in current) current.remove(id)
+        else if (current.size < MAX_SOURCE_NETS) current.add(id)
+        sourceIdsCsv = current.joinToString(",")
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Net name") },
-                    placeholder = { Text("e.g. Juggling") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    label = { Text("Scope description") },
-                    placeholder = { Text("All aspects of Juggling — patterns, science, technology, history, research…") },
-                    minLines = 3,
-                    maxLines = 6,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    "Every question, stat and podcast recommendation for this net " +
-                        "stays inside the scope you describe here.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                if (!isAll) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Net name") },
+                        placeholder = { Text("e.g. Juggling") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = description,
+                        onValueChange = { description = it },
+                        label = { Text("Scope description") },
+                        placeholder = { Text("All aspects of Juggling — patterns, science, technology, history, research…") },
+                        minLines = 3,
+                        maxLines = 6,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "Every question, stat and podcast recommendation for this net " +
+                            "stays inside the scope you describe here.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        "The All net spans all knowledge — its name and scope are fixed. " +
+                            "Podcasts and occasional accents are configurable below.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -258,12 +297,133 @@ private fun NetEditDialog(
                     }
                     Switch(checked = podcastEnabled, onCheckedChange = { podcastEnabled = it })
                 }
+
+                Text(
+                    "Occasional accents",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "Light seasoning only — at most a question or two per batch; " +
+                        "the net's own scope always dominates.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .padding(vertical = 2.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Location accents", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Occasionally ask about your current region " +
+                                "(needs location permission)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = locationEnabled,
+                        onCheckedChange = { want ->
+                            if (!want) {
+                                locationEnabled = false
+                            } else if (ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.ACCESS_COARSE_LOCATION
+                                ) == PackageManager.PERMISSION_GRANTED ||
+                                ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.ACCESS_FINE_LOCATION
+                                ) == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                locationEnabled = true
+                            } else {
+                                locationEnabled = true // optimistic; reverted if denied
+                                locationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                            }
+                        }
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .padding(vertical = 2.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Date accents", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Occasionally tie questions to today — this date in " +
+                                "history, this year in past centuries",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(checked = dateEnabled, onCheckedChange = { dateEnabled = it })
+                }
+                if (otherNets.isNotEmpty()) {
+                    Text("Pull knowledge from other nets", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Occasionally anchor questions in what you know from these " +
+                            "nets — questions still stay inside this net's scope.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    otherNets.forEach { src ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { toggleSource(src.id) }
+                                .padding(vertical = 1.dp)
+                        ) {
+                            Checkbox(
+                                checked = src.id in selectedSources,
+                                onCheckedChange = { toggleSource(src.id) }
+                            )
+                            Column {
+                                Text(src.name, style = MaterialTheme.typography.bodySmall)
+                                if (src.description.isNotBlank()) {
+                                    Text(
+                                        src.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (selectedSources.size >= MAX_SOURCE_NETS) {
+                        Text(
+                            "At most $MAX_SOURCE_NETS source nets are used.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(name.trim(), description.trim(), podcastEnabled) },
-                enabled = name.isNotBlank()
+                onClick = {
+                    // For the All net, name/description come unchanged from
+                    // the initial net (the fields are hidden).
+                    val draft = (initial ?: Net(name = "")).copy(
+                        name = if (isAll) initial!!.name else name.trim(),
+                        description = if (isAll) initial!!.description else description.trim(),
+                        podcastEnabled = podcastEnabled,
+                        locationEnabled = locationEnabled,
+                        dateEnabled = dateEnabled,
+                        sourceNetIds = selectedSources
+                    )
+                    onSave(draft)
+                },
+                enabled = isAll || name.isNotBlank()
             ) { Text("Save") }
         },
         dismissButton = {
