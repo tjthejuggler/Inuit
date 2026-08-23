@@ -38,6 +38,13 @@ class QuestionStore(
     private val summaries = LinkedHashMap<String, KnowledgeSummary>()
     private val frontiers = mutableListOf<String>()
 
+    /** The question currently on screen (shown but not yet answered).
+     *  Persisted so closing the app never wastes it — it comes back on restart. */
+    private var pendingId: String? = null
+
+    /** Serializes file writes: debounced and immediate persists may overlap. */
+    private val fileLock = Any()
+
     private var persistJob: Job? = null
     private val file = File(context.filesDir, FILE)
 
@@ -56,6 +63,11 @@ class QuestionStore(
     fun snapshotSummaries(): List<KnowledgeSummary> = synchronized(lock) { summaries.values.toList() }
     fun snapshotFrontiers(): List<String> = synchronized(lock) { frontiers.toList() }
     fun questionById(id: String): Question? = synchronized(lock) { byId[id] }
+
+    /** The persisted on-screen question, if it is still unanswered. */
+    fun pendingQuestion(): Question? = synchronized(lock) {
+        pendingId?.let { byId[it] }?.takeIf { it.servedCount == 0 }
+    }
 
     /** Unserved questions = the live queue. */
     fun queue(): List<Question> = synchronized(lock) { questions.filter { it.servedCount == 0 } }
@@ -76,7 +88,15 @@ class QuestionStore(
         bump()
     }
 
-    /** Records an answer; updates the question, domain stats and streak data. */
+    /** Persists which question is on screen; survives app close / process death. */
+    fun setPendingQuestion(id: String?) {
+        synchronized(lock) { pendingId = id }
+        bump()
+        persistImmediately()
+    }
+
+    /** Records an answer; updates the question, domain stats and streak data.
+     *  Answers are persisted immediately — they must survive process death. */
     fun recordAnswer(questionId: String, correct: Boolean, userAnswer: String, elapsedMs: Long): AnswerRecord? {
         val record: AnswerRecord
         synchronized(lock) {
@@ -97,6 +117,7 @@ class QuestionStore(
             }
         }
         bump()
+        persistImmediately()
         return record
     }
 
@@ -143,6 +164,12 @@ class QuestionStore(
         }
     }
 
+    /** Fire-and-forget immediate write (answers, pending question, batches) —
+     *  used when losing the last 1.2s of state would hurt. */
+    fun persistImmediately() {
+        scope.launch(Dispatchers.IO) { persistNow() }
+    }
+
     fun persistNow() {
         try {
             val payload = synchronized(lock) {
@@ -152,13 +179,16 @@ class QuestionStore(
                     put("answers", JSONArray().apply { answers.forEach { put(it.toJson()) } })
                     put("summaries", JSONObject().apply { summaries.values.forEach { put(it.domain, JSONObject().apply { put("text", it.text); put("ts", it.createdAt); put("n", it.coveredAnswers) }) } })
                     put("frontiers", JSONArray(frontiers))
+                    pendingId?.let { put("pending", it) }
                 }
             }
-            val tmp = File(file.parentFile, FILE + ".tmp")
-            tmp.writeText(payload.toString())
-            if (!tmp.renameTo(file)) {
-                file.delete()
-                tmp.renameTo(file)
+            synchronized(fileLock) {
+                val tmp = File(file.parentFile, FILE + ".tmp")
+                tmp.writeText(payload.toString())
+                if (!tmp.renameTo(file)) {
+                    file.delete()
+                    tmp.renameTo(file)
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "persist failed", e)
@@ -203,6 +233,7 @@ class QuestionStore(
             }
             val fr = root.optJSONArray("frontiers")
             if (fr != null) for (i in 0 until fr.length()) frontiers.add(fr.optString(i))
+            pendingId = root.optString("pending").ifBlank { null }
             Log.i(TAG, "loaded ${questions.size} questions, ${answers.size} answers")
         } catch (e: Exception) {
             Log.e(TAG, "load failed — starting empty", e)

@@ -8,15 +8,13 @@ import com.example.inuit.data.SettingsStore
 import com.example.inuit.data.llm.LlmClient
 import com.example.inuit.data.llm.LlmConfig
 import com.example.inuit.data.llm.LlmMessage
-import com.example.inuit.data.llm.LlmToolSpec
-import com.example.inuit.data.llm.McpClient
-import com.example.inuit.data.llm.McpConfig
-import com.example.inuit.data.llm.McpTool
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
@@ -30,7 +28,10 @@ import java.time.ZoneId
  *  4. optional second-pass verifier drops suspicious questions,
  *  5. inserts into the queue, refreshes frontiers and rolling summaries.
  *
- * Triggered whenever the queue drops below the configured threshold.
+ * Triggered whenever the queue drops below the configured threshold; when a
+ * personalized batch isn't enough to reach the threshold, the [Harvester]
+ * tops the stockpile up with bulk web-sourced trivia through the same
+ * validation pipeline.
  * Every stage is logged to [DebugLog] so failures are always diagnosable
  * (Settings → Diagnostics, logcat tag "Inuit", or files/inuit_debug.log).
  */
@@ -38,12 +39,14 @@ class QuestionGenerator(
     private val store: QuestionStore,
     private val settingsStore: SettingsStore,
     private val llm: LlmClient,
+    private val harvester: Harvester,
     private val scope: CoroutineScope
 ) {
     companion object {
         private const val TAG = "Gen"
         private const val MAX_ROUNDS = 6
-        private const val MAX_MCP_SERVERS = 3
+        private const val MAX_HARVEST_ROUNDS = 3
+        private const val HARVEST_TARGET_CAP = 80
         private const val SUMMARY_INTERVAL = 60
         private const val SUMMARY_MIN_ANSWERS = 30
 
@@ -76,6 +79,7 @@ class QuestionGenerator(
             if (store.queueSize() >= s.queueThreshold) return@launch
             DebugLog.i(TAG, "queue ${store.queueSize()} < threshold ${s.queueThreshold} — generating")
             runGeneration(s)
+            topUpStockpile(s)
         }
     }
 
@@ -89,6 +93,42 @@ class QuestionGenerator(
                 return@launch
             }
             runGeneration(s)
+            topUpStockpile(s)
+        }
+    }
+
+    /**
+     * Stockpile top-up: if the personalized batch left the queue below the
+     * threshold, harvest bulk web trivia until it's reached (bounded rounds).
+     * The user should never run out of questions.
+     */
+    private suspend fun topUpStockpile(s: AppSettings) {
+        if (!s.harvestEnabled) return
+        if (store.queueSize() >= s.queueThreshold) return
+        val cfg = LlmConfig(s.baseUrl, s.apiKey, s.model)
+        var rounds = 0
+        var total = 0
+        while (store.queueSize() < s.queueThreshold && rounds < MAX_HARVEST_ROUNDS) {
+            rounds++
+            _state.value = GenState.Running("Stockpiling trivia from the web (round $rounds)…")
+            val target = minOf(HARVEST_TARGET_CAP, (s.queueThreshold - store.queueSize()).coerceAtLeast(20))
+            val added = try {
+                harvester.harvestRound(cfg, s, target) { note ->
+                    _state.value = GenState.Running(note)
+                }
+            } catch (e: java.io.IOException) {
+                DebugLog.e(TAG, "harvest network error — stopping top-up", e)
+                break
+            } catch (e: Exception) {
+                DebugLog.e(TAG, "harvest round failed — stopping top-up", e)
+                break
+            }
+            total += added
+            if (added == 0) break // nothing usable — don't hammer the web
+        }
+        if (total > 0) {
+            DebugLog.i(TAG, "stockpile top-up done: +$total web questions, queue=${store.queueSize()}")
+            _state.value = GenState.Completed(total)
         }
     }
 
@@ -146,32 +186,12 @@ class QuestionGenerator(
 
             // ── MCP tools (budgeted) ──────────────────────────────────────
             var budget = s.mcpBudget
-            val clients = HashMap<String, McpClient>()
-            val toolSpecs = ArrayList<LlmToolSpec>()
-            val toolServer = HashMap<String, String>() // tool name → server name
+            var session: McpSession? = null
             if (budget > 0) {
                 _state.value = GenState.Running("Connecting MCP servers…")
-                val parsed = McpConfig.parse(s.mcpJson)
-                if (parsed.error != null) DebugLog.w(TAG, "MCP JSON invalid: ${parsed.error}")
-                if (parsed.skipped.isNotEmpty())
-                    DebugLog.w(TAG, "MCP skipped (stdio unsupported): ${parsed.skipped.joinToString()}")
-                for (server in parsed.servers.take(MAX_MCP_SERVERS)) {
-                    try {
-                        val client = McpClient(server)
-                        client.initialize()
-                        val tools: List<McpTool> = client.listTools()
-                        clients[server.name] = client
-                        DebugLog.i(TAG, "MCP '${server.name}' ready — tools: ${tools.joinToString { it.name }}")
-                        for (t in tools) {
-                            val uniqueName = if (toolServer.containsKey(t.name)) "${server.name}__${t.name}" else t.name
-                            toolSpecs.add(LlmToolSpec(uniqueName, t.description, t.parametersJson))
-                            toolServer[uniqueName] = server.name
-                        }
-                    } catch (e: Exception) {
-                        DebugLog.e(TAG, "MCP server '${server.name}' unavailable (continuing without it)", e)
-                    }
-                }
-                if (toolSpecs.isEmpty())
+                session = McpSession(s)
+                session.connect()
+                if (!session.hasTools)
                     DebugLog.w(TAG, "no MCP tools available — generating from certain knowledge only")
             }
 
@@ -185,14 +205,14 @@ class QuestionGenerator(
             var round = 0
             while (round < MAX_ROUNDS) {
                 round++
-                val useTools = budget > 0 && toolSpecs.isNotEmpty()
+                val useTools = budget > 0 && session?.hasTools == true
                 _state.value = GenState.Running(
                     if (useTools) "Generating batch (web tools available: $budget)…"
                     else "Generating batch…"
                 )
                 val assistant = llm.chat(
                     cfg, messages,
-                    tools = if (useTools) toolSpecs else emptyList(),
+                    tools = if (useTools) session?.toolSpecs ?: emptyList() else emptyList(),
                     temperature = s.temperature,
                     maxTokens = GEN_MAX_TOKENS,
                     disableThinking = s.disableThinking
@@ -207,24 +227,11 @@ class QuestionGenerator(
                         budget <= 0 ->
                             "Tool budget exhausted for this batch. Proceed with certain knowledge only."
                         else -> {
-                            val serverName = toolServer[call.name]
-                            val client = clients[serverName]
-                            if (client == null) {
-                                "Unknown tool '${call.name}'. Available: ${toolServer.keys.joinToString()}"
-                            } else {
-                                budget--
-                                _state.value = GenState.Running("Web lookup ($budget left)…")
-                                DebugLog.i(TAG, "tool call '${call.name}' args=${call.argumentsJson.take(120)}")
-                                try {
-                                    val rawName = if (call.name.contains("__")) call.name.substringAfter("__") else call.name
-                                    client.callTool(rawName, call.argumentsJson).also {
-                                        DebugLog.i(TAG, "tool '${call.name}' returned ${it.length} chars")
-                                    }
-                                } catch (e: Exception) {
-                                    DebugLog.e(TAG, "tool '${call.name}' failed", e)
-                                    "tool error: ${e.message}"
-                                }
-                            }
+                            budget--
+                            _state.value = GenState.Running("Web lookup ($budget left)…")
+                            DebugLog.i(TAG, "tool call '${call.name}' args=${call.argumentsJson.take(120)}")
+                            session?.call(call.name, call.argumentsJson)
+                                ?: "No web tools connected."
                         }
                     }
                     messages.add(LlmMessage.tool(call.id, call.name, result))
@@ -284,6 +291,9 @@ class QuestionGenerator(
             if (parsed.newFrontiers.isNotEmpty()) {
                 store.replaceFrontiers(store.snapshotFrontiers() + parsed.newFrontiers)
             }
+            // The batch must survive process death — write it now, not after
+            // the 1.2s debounce.
+            withContext(Dispatchers.IO) { store.persistNow() }
             DebugLog.i(TAG, "batch done in ${System.currentTimeMillis() - startedAt}ms: " +
                 "+${accepted.size} questions (dropped ${parsed.dropped})")
 

@@ -50,6 +50,38 @@ object Grader {
         return parts.joinToString(" ")
     }
 
+    /**
+     * A miss so far off it suggests the user doesn't know the basic ENTITIES
+     * of the domain (e.g. naming a continent when asked for a planet, a city
+     * for a country). This is a heuristic pre-filter — the generator LLM sees
+     * the raw answer text and makes the final call (near-misses like "Saturn"
+     * for "Jupiter" are wrong-but-in-category and only the LLM can tell).
+     */
+    fun isWildMiss(q: Question, raw: String): Boolean {
+        if (grade(q, raw)) return false
+        return when (q.type) {
+            QuestionType.FILL_BLANK -> {
+                val given = normalize(raw)
+                if (given.isEmpty()) return false
+                q.acceptedAnswers.none { accepted ->
+                    val norm = normalize(accepted)
+                    closeEnough(norm, given) || sharesSignificantWord(norm, given)
+                }
+            }
+            // Typed something that isn't even a number for a numeric question.
+            QuestionType.NUMERIC -> parseNumber(raw) == null
+            else -> false
+        }
+    }
+
+    /** True when both strings share a word of >= 4 letters ("united" in
+     *  "United Kingdom" vs "United States") — same-family signal. */
+    fun sharesSignificantWord(a: String, b: String): Boolean {
+        val wa = a.split(" ").filter { it.length >= 4 }.toSet()
+        if (wa.isEmpty()) return false
+        return b.split(" ").any { it.length >= 4 && it in wa }
+    }
+
     /** Exact match, or a tiny edit distance for long words (typos). */
     fun closeEnough(a: String, b: String): Boolean {
         if (a == b) return true

@@ -83,4 +83,61 @@ class GraderTest {
         assertEquals(1, Grader.levenshtein("abc", "abd"))
         assertEquals(3, Grader.levenshtein("abc", "xyz"))
     }
+
+    // ── wild misses (off-category answers) ───────────────────────────────
+
+    private val planets = Question(
+        type = QuestionType.FILL_BLANK,
+        prompt = "Name the largest planet in the Solar System.",
+        acceptedAnswers = listOf("Jupiter")
+    )
+
+    @Test
+    fun `continent named as planet is a wild miss`() {
+        assertTrue(Grader.isWildMiss(planets, "Africa"))
+        assertTrue(Grader.isWildMiss(planets, "the ocean"))
+    }
+
+    @Test
+    fun `same-family answers are not wild misses`() {
+        // shares the significant word "united"
+        val uk = Question(
+            type = QuestionType.FILL_BLANK,
+            prompt = "Which country has the Union Jack on its flag?",
+            acceptedAnswers = listOf("United Kingdom")
+        )
+        assertFalse(Grader.isWildMiss(uk, "United States"))
+        // typo-level closeness
+        assertFalse(Grader.isWildMiss(planets, "Jupite"))
+    }
+
+    @Test
+    fun `correct answers are never wild misses`() {
+        assertFalse(Grader.isWildMiss(planets, "Jupiter"))
+    }
+
+    @Test
+    fun `non-numeric answer to a numeric question is a wild miss`() {
+        val n = Question(
+            type = QuestionType.NUMERIC,
+            prompt = "Speed of light in km/s?",
+            answerNumber = 299792.0
+        )
+        assertTrue(Grader.isWildMiss(n, "very fast"))
+        // a wrong but numeric guess is NOT wild (they understood the question)
+        assertFalse(Grader.isWildMiss(n, "150000"))
+    }
+
+    @Test
+    fun `multiple choice and true-false never report wild misses`() {
+        assertFalse(Grader.isWildMiss(mc(1), "0"))
+        assertFalse(Grader.isWildMiss(tf(true), "false"))
+    }
+
+    @Test
+    fun `sharesSignificantWord`() {
+        assertTrue(Grader.sharesSignificantWord("united kingdom", "united states"))
+        assertFalse(Grader.sharesSignificantWord("jupiter", "africa"))
+        assertFalse(Grader.sharesSignificantWord("uk", "uruguay")) // too short to count
+    }
 }

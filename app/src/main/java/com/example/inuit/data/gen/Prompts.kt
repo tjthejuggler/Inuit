@@ -27,6 +27,7 @@ ABSOLUTE RULES:
 5. DOMAIN TAGS — tag every question with 1-3 hierarchical paths using " > " separators (e.g. "Science > Physics > Optics"). Reuse existing paths from the context when they fit; create deeper/more specific paths when the question is narrower. Top level must be one of the broad realms seen in context or an equally broad new one.
 6. WEB TOOLS — you may call the provided web search / web reader tools AT MOST $mcpBudget TIMES TOTAL for this whole batch, and only to (a) ground obscure statistics you are not already certain of, or (b) double-check a borderline fact. Never for common knowledge. If the budget is 0 or exhausted, generate only from certain knowledge.
 7. CONFIDENCE — report honest calibrated certainty per question (0-1). Questions below the threshold are discarded; do not inflate.
+8. OFF-CATEGORY ANSWERS → NOVICE SCAFFOLDING — recent answers may show the user's actual wrong answer. Classify every wrong free-text answer: a NEAR-MISS (wrong but the right kind of entity, e.g. "Saturn" for the largest planet) just needs the normal ladder; an OFF-CATEGORY answer (not even the right kind of entity, e.g. a continent named as a planet, a city as a country, a person as a chemical element) means the user does not know the BASIC ENTITIES of that domain. For any such domain: rebuild from recognition — over the next batches ask difficulty 1-2 MULTIPLE_CHOICE / TRUE_FALSE questions that introduce and name the domain's basic entities (members, categories, famous examples) BEFORE any recall (fill_blank/numeric) question returns to it. Ladder back up gradually as those are answered.
 
 OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
 {
@@ -89,6 +90,12 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
             ctx.knownLines.forEach { sb.append(it).append('\n') }
         }
 
+        if (ctx.noviceDomains.isNotEmpty()) {
+            sb.append("\n== NOVICE DOMAINS (very low accuracy and/or off-category answers — the user may not know the basic entities) ==\n")
+            ctx.noviceDomains.forEach { sb.append("- ").append(it)
+                .append(" → scaffold: difficulty 1-2 recognition questions (multiple_choice / true_false) naming the basic entities first\n") }
+        }
+
         sb.append("\n== DOMAIN PROFICIENCY ==\n")
         if (ctx.domainDigest.isEmpty()) sb.append("(no stats yet)\n")
         else ctx.domainDigest.forEach { sb.append(it).append('\n') }
@@ -118,6 +125,11 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         }
         sb.append("Use all four types (at least 2 questions per type). ")
         sb.append("Include at least 2 obscure-but-certain questions (statistics, magnitudes, records). ")
+        if (ctx.noviceDomains.isNotEmpty()) {
+            sb.append("For every NOVICE DOMAIN (and any domain where a recent wrong answer was off-category), ")
+                sb.append("include at least 2 easy recognition questions (difficulty 1-2, multiple_choice or true_false) ")
+                .append("that introduce that domain's basic entities. ")
+        }
         sb.append("Prefer difficulty near the user's level: slightly above their comfort zone in weak areas, higher in strong areas.")
         return sb.toString()
     }
@@ -180,6 +192,47 @@ Reply with a single JSON object, no fences: {"summaries": {"<domain>": "<summary
         }
         return out
     }
+
+    // ── Bulk web harvest (stockpile mode) ────────────────────────────────
+
+    fun harvestSystemPrompt(toolBudget: Int): String = """
+You are the stockpile harvester of Inuit, a trivia app. Your job is VOLUME: use the provided web search / web reader tools (AT MOST $toolBudget CALLS TOTAL) to find large, reputable trivia question lists online, then convert what you actually found into Inuit's question format. These questions are NOT personalized — they are general-knowledge trivia for a stockpile, so no user context is given.
+
+RULES:
+1. SOURCE-GROUNDED — only emit questions whose answer is clearly stated in the content you fetched. Do NOT invent questions from thin air in this mode; if a fetched page is thin, search again within budget. Skip anything ambiguous, opinion-based, time-sensitive ("current champion"), or contested.
+2. VOLUME — aim for the requested count. Prefer big lists (100+ questions pages) and convert as many usable items as possible.
+3. TAGGING — tag every question with 1-3 hierarchical domain paths ("Science > Physics > Optics"). Set difficulty by GENERAL knowledge standards (1 = most people know, 5 = expert), not for any particular user.
+4. FORMAT — prefer multiple_choice (generate 4 plausible wrong options yourself; no 'all of the above'); also use true_false and fill_blank where they fit naturally. Self-contained prompts <= 280 chars.
+5. CONFIDENCE — 0.9-1.0 only when the fetched source clearly states the answer; otherwise skip the question.
+6. VARIETY — spread across many domains; avoid making more than ~4 questions about the same single subject.
+
+OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
+{
+  "questions": [
+    {
+      "type": "true_false" | "multiple_choice" | "numeric" | "fill_blank",
+      "prompt": "question text, self-contained, <= 280 chars",
+      "choices": ["...","...","..."],
+      "answer": <boolean | integer index | number | string>,
+      "tolerance": 0.5,
+      "unit": "km/h",
+      "accepted": ["alt answer"],
+      "domains": ["A > B", "A > B > C"],
+      "difficulty": 1-5,
+      "confidence": 0.0-1.0,
+      "rationale": "one-line internal justification"
+    }
+  ],
+  "new_frontiers": ["Realm > Subrealm"]
+}
+""".trim()
+
+    fun harvestUserPrompt(target: Int, themeHint: String, queued: Int): String = """
+== TASK ==
+The app's question stockpile is low ($queued queued). Search the web for large trivia question lists — e.g. "100 trivia questions and answers", "pub quiz questions list", "general knowledge quiz with answers"$themeHint — then READ one or two of the most promising pages and convert up to $target usable questions into the JSON format.
+
+Prioritize breadth and volume. Every question must be answerable from what you actually read.
+""".trim()
 
     // ── Robust JSON extraction ───────────────────────────────────────────
 

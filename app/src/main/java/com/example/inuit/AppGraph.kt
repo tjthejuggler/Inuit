@@ -3,6 +3,7 @@ package com.example.inuit
 import android.content.Context
 import com.example.inuit.data.QuestionStore
 import com.example.inuit.data.SettingsStore
+import com.example.inuit.data.gen.Harvester
 import com.example.inuit.data.gen.QuestionGenerator
 import com.example.inuit.data.llm.LlmClient
 import kotlinx.coroutines.CoroutineScope
@@ -15,5 +16,6 @@ class AppGraph(context: Context) {
     val settingsStore = SettingsStore(context)
     val store = QuestionStore(context, appScope)
     val llm = LlmClient()
-    val generator = QuestionGenerator(store, settingsStore, llm, appScope)
+    val harvester = Harvester(store, llm)
+    val generator = QuestionGenerator(store, settingsStore, llm, harvester, appScope)
 }

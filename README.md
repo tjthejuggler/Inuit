@@ -51,7 +51,7 @@ heart of the app.
 │  queue      │ ◀─────────── │  (JSON file)   │                        │   Builder    │
 └────────────┘  new batch    └──────────────┘                        └──────┬──────┘
       ▲                                                                  │
-      │          refill when queue < threshold (default 50)              ▼
+      │          refill when queue < threshold (default 150)             ▼
       │                     ┌────────────────┐   tools (budgeted)  ┌──────────────┐
       └──────────────────── │  Generator      │ ◀────────────────── │  LLM client   │
                             │  + Verifier     │                     │  + MCP client │
@@ -102,12 +102,15 @@ heart of the app.
 
 ```
 app/src/main/java/com/example/inuit/
-  InuitApp.kt, AppGraph.kt, MainActivity.kt
+  InuitApp.kt, AppGraph.kt, MainActivity.kt, BatchGenService.kt
+               (foreground service: batches survive app close / screen off)
   data/        Model.kt QuestionStore.kt SettingsStore.kt Grader.kt StatsCalculator.kt
                QuestionSelector.kt   (pick strategy: threads, spaced revisits, diversity)
   data/llm/    Http.kt LlmClient.kt McpClient.kt
   data/gen/    Prompts.kt ContextBuilder.kt QuestionGenerator.kt Validator.kt
                Serendipity.kt RealmTaxonomy.kt   (distant-frontier planner)
+               AdaptiveSignals.kt  (off-category answers → novice-domain scaffolding)
+               McpSession.kt Harvester.kt  (bulk web trivia stockpiling)
   ui/          MainScreen.kt QuestionCard.kt StatsSections.kt SettingsScreen.kt MainViewModel.kt
   ui/charts/   Charts.kt        (custom Canvas charts — no chart dependency)
   ui/theme/                    (dark-first palette)
@@ -131,6 +134,25 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-23** — **Resilient batches + adaptive difficulty + web stockpile.**
+  Batch generation now runs under a foreground service (`BatchGenService`:
+  dataSync type, partial wake lock, START_STICKY) — closing the app or turning
+  the screen off no longer kills an in-flight batch, and if the system still
+  kills the process the service restarts and generation resumes from the
+  persisted store (batches, answers and the on-screen question are written
+  immediately, not debounce-delayed). Adaptive difficulty: wrong free-text
+  answers now carry the user's raw answer into the generation context;
+  off-category answers ("Africa" for the largest planet) are flagged by a
+  local heuristic (`Grader.isWildMiss`) and by the LLM itself (new prompt
+  rule), marking the domain NOVICE — future batches scaffold it with
+  difficulty 1-2 multiple-choice / true-false questions that introduce the
+  domain's basic entities before recall questions return. No wasted
+  questions: the on-screen question id is persisted and restored on app
+  restart. Stockpile: when a personalized batch leaves the queue below the
+  (new, much larger — default 150) threshold, the new `Harvester` searches
+  the web via MCP tools for large trivia lists, converts, tags, validates and
+  fact-checks them through the same pipeline (toggleable in Settings).
+  41 unit tests (13 new).
 - **2026-08-22 (4)** — **Instant flow + spaced revisits.** Submitting an answer
   now advances to the next question immediately — the neutral acknowledgment
   panel and "Next question" button are gone (a stale double-tap on the old

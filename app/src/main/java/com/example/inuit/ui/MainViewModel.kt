@@ -55,7 +55,9 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     init {
-        pickNext()
+        // Restore the persisted on-screen question first: a question shown
+        // but never answered must NEVER be wasted by closing the app.
+        _currentQuestion.value = store.pendingQuestion() ?: selectNext()
         // If the queue is empty but generation just finished, pick a question.
         viewModelScope.launch {
             graph.generator.state.collect { st ->
@@ -81,13 +83,20 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
      * answer can never influence this pick (blind-training invariant).
      */
     fun pickNext() {
-        _currentQuestion.value = QuestionSelector.select(
+        _currentQuestion.value = selectNext()
+    }
+
+    /** Selects the next question AND persists it as the pending one. */
+    private fun selectNext(): Question? {
+        val q = QuestionSelector.select(
             store.snapshotQuestions(),
             store.snapshotAnswers(),
             _currentQuestion.value?.id,
             sessionBoundaryMs,
             rng
         )
+        store.setPendingQuestion(q?.id)
+        return q
     }
 
     /**
@@ -156,10 +165,10 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun saveGenerationSettings(
         batchSize: Int, queueThreshold: Int, verifyEnabled: Boolean,
-        minConfidence: Float, mcpBudget: Int
+        minConfidence: Float, mcpBudget: Int, harvestEnabled: Boolean
     ) {
         viewModelScope.launch {
-            graph.settingsStore.saveGeneration(batchSize, queueThreshold, verifyEnabled, minConfidence, mcpBudget)
+            graph.settingsStore.saveGeneration(batchSize, queueThreshold, verifyEnabled, minConfidence, mcpBudget, harvestEnabled)
         }
     }
 

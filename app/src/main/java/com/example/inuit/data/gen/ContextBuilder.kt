@@ -35,6 +35,8 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         val unknownGroups: List<UnknownGroup>,
         val knownLines: List<String>,
         val domainDigest: List<String>,
+        /** Top-level domains flagged NOVICE — scaffold with easy recognition questions. */
+        val noviceDomains: List<String>,
         val summaries: List<KnowledgeSummary>,
         val distantFrontiers: List<String>,
         val revisitFrontiers: List<String>,
@@ -52,9 +54,10 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         val frontiers = store.snapshotFrontiers()
         val byId = questions.associateBy { it.id }
 
-        // ── recent answers (verbatim, newest last) ────────────────────────
+        // ── recent answers (verbatim, newest last; wrong free-text answers
+        //    include the user's raw answer + wild-miss annotation) ─────────
         val recent = answers.takeLast(RECENT_WINDOW)
-        val recentLines = recent.map { renderAnswerLine(it, byId) }
+        val recentLines = recent.map { AdaptiveSignals.renderAnswerLine(it, byId[it.questionId]) }
 
         // ── unknown lineages ──────────────────────────────────────────────
         val wrongByRoot = HashMap<String, MutableList<AnswerRecord>>()
@@ -92,6 +95,16 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
             "✓ (d${q.difficulty}) [${q.domains.firstOrNull() ?: "untagged"}] ${q.prompt}"
         }
 
+        // ── novice domains (adaptive difficulty: off-category answers) ────
+        val wildMisses = AdaptiveSignals.wildMissCounts(recent, byId)
+        val noviceLines = AdaptiveSignals.noviceDomains(stats, wildMisses)
+            .sortedWith(compareBy<DomainStat> { it.accuracy }.thenBy { it.path })
+            .take(6)
+            .map { s ->
+                val wild = wildMisses[s.path.substringBefore(" > ")] ?: 0
+                "novice ${renderStat(s)}" + if (wild > 0) " +$wild off-category answer(s)" else ""
+            }
+
         // ── domain digest ─────────────────────────────────────────────────
         val withAttempts = stats.filter { it.attempts > 0 }
         val weakest = withAttempts.filter { it.attempts >= 3 }
@@ -120,21 +133,16 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         val totals = "answers=${answers.size} correct=${answers.count { it.correct }} " +
             "questionsAsked=${questions.count { it.servedCount > 0 }} queued=${store.queueSize()}"
 
-        return Context(recentLines, unknownGroups, knownLines, digest.toList(), summaries, distant, revisits, totals)
+        return Context(
+            recentLines, unknownGroups, knownLines, digest.toList(), noviceLines,
+            summaries, distant, revisits, totals
+        )
     }
 
     private fun statusOf(questionId: String, answers: List<AnswerRecord>): String {
         val records = answers.filter { it.questionId == questionId }
         val last = records.lastOrNull() ?: return "unseen"
         return if (last.correct) "answered-correctly" else "answered-wrong"
-    }
-
-    private fun renderAnswerLine(a: AnswerRecord, byId: Map<String, Question>): String {
-        val q = byId[a.questionId]
-        val mark = if (a.correct) "✓" else "✗"
-        val dom = q?.domains?.firstOrNull() ?: "untagged"
-        val diff = q?.difficulty ?: "?"
-        return "$mark (d$diff) [$dom] ${q?.prompt ?: "(deleted question)"}"
     }
 
     private fun renderStat(s: DomainStat): String =

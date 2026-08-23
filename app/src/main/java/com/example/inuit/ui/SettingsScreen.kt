@@ -81,6 +81,7 @@ fun SettingsScreen(
     var minConfidence by remember(settings.minConfidence) { mutableFloatStateOf(settings.minConfidence) }
     var mcpBudget by remember(settings.mcpBudget) { mutableIntStateOf(settings.mcpBudget) }
     var verify by remember(settings.verifyEnabled) { mutableStateOf(settings.verifyEnabled) }
+    var harvest by remember(settings.harvestEnabled) { mutableStateOf(settings.harvestEnabled) }
 
     Scaffold(
         topBar = {
@@ -186,9 +187,9 @@ fun SettingsScreen(
                     onChange = { batchSize = it.toInt() }
                 )
                 LabeledSlider(
-                    label = "Refill queue when fewer than",
+                    label = "Stockpile target (refill when queue below)",
                     value = queueThreshold.toFloat(),
-                    range = 10f..150f,
+                    range = 10f..500f,
                     display = { "${it.toInt()}" },
                     onChange = { queueThreshold = it.toInt() }
                 )
@@ -220,8 +221,23 @@ fun SettingsScreen(
                     }
                     Switch(checked = verify, onCheckedChange = { verify = it })
                 }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Web trivia stockpile (harvest)", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "When the queue is still low after a batch, fetch big trivia lists " +
+                                "from the web, tag and fact-check them",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(checked = harvest, onCheckedChange = { harvest = it })
+                }
                 Button(onClick = {
-                    viewModel.saveGenerationSettings(batchSize, queueThreshold, verify, minConfidence, mcpBudget)
+                    viewModel.saveGenerationSettings(batchSize, queueThreshold, verify, minConfidence, mcpBudget, harvest)
                 }) { Text("Save") }
             }
 

@@ -41,10 +41,13 @@ data class AppSettings(
     /** Send thinking:disabled — GLM reasoning models skip internal chains (faster/cheaper). */
     val disableThinking: Boolean = false,
     val batchSize: Int = 30,
-    val queueThreshold: Int = 50,
+    /** Stockpile target — kept large so the user never runs out of questions. */
+    val queueThreshold: Int = 150,
     val verifyEnabled: Boolean = true,
     val minConfidence: Float = 0.8f,
     val mcpBudget: Int = 3,
+    /** Top the stockpile up with bulk web-harvested trivia when low. */
+    val harvestEnabled: Boolean = true,
     val mcpJson: String = DEFAULT_MCP_JSON,
     /** Total answer count already covered by rolling summaries. */
     val summarizedAnswers: Int = 0
@@ -65,6 +68,7 @@ class SettingsStore(private val context: Context) {
         val VERIFY = booleanPreferencesKey("gen_verify")
         val MIN_CONFIDENCE = floatPreferencesKey("gen_min_confidence")
         val MCP_BUDGET = intPreferencesKey("gen_mcp_budget")
+        val HARVEST = booleanPreferencesKey("gen_harvest")
         val MCP_JSON = stringPreferencesKey("mcp_json")
         val SUMMARIZED = intPreferencesKey("summarized_answers")
     }
@@ -77,10 +81,11 @@ class SettingsStore(private val context: Context) {
             temperature = p[K.TEMPERATURE] ?: 0.7f,
             disableThinking = p[K.DISABLE_THINKING] ?: false,
             batchSize = (p[K.BATCH_SIZE] ?: 30).coerceIn(5, 60),
-            queueThreshold = (p[K.QUEUE_THRESHOLD] ?: 50).coerceIn(5, 200),
+            queueThreshold = (p[K.QUEUE_THRESHOLD] ?: 150).coerceIn(5, 500),
             verifyEnabled = p[K.VERIFY] ?: true,
             minConfidence = (p[K.MIN_CONFIDENCE] ?: 0.8f).coerceIn(0.5f, 1f),
             mcpBudget = (p[K.MCP_BUDGET] ?: 3).coerceIn(0, 20),
+            harvestEnabled = p[K.HARVEST] ?: true,
             mcpJson = p[K.MCP_JSON] ?: DEFAULT_MCP_JSON,
             summarizedAnswers = p[K.SUMMARIZED] ?: 0
         )
@@ -102,14 +107,16 @@ class SettingsStore(private val context: Context) {
         queueThreshold: Int,
         verifyEnabled: Boolean,
         minConfidence: Float,
-        mcpBudget: Int
+        mcpBudget: Int,
+        harvestEnabled: Boolean
     ) {
         context.dataStore.edit {
             it[K.BATCH_SIZE] = batchSize.coerceIn(5, 60)
-            it[K.QUEUE_THRESHOLD] = queueThreshold.coerceIn(5, 200)
+            it[K.QUEUE_THRESHOLD] = queueThreshold.coerceIn(5, 500)
             it[K.VERIFY] = verifyEnabled
             it[K.MIN_CONFIDENCE] = minConfidence.coerceIn(0.5f, 1f)
             it[K.MCP_BUDGET] = mcpBudget.coerceIn(0, 20)
+            it[K.HARVEST] = harvestEnabled
         }
     }
 
