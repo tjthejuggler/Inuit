@@ -10,6 +10,7 @@ import com.example.inuit.data.SettingsStore
 import com.example.inuit.data.llm.LlmClient
 import com.example.inuit.data.llm.LlmConfig
 import com.example.inuit.data.llm.LlmMessage
+import com.example.inuit.data.llm.LlmToolSpec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
@@ -61,6 +63,22 @@ class QuestionGenerator(
         private const val SUMMARY_MAX_TOKENS = 4_000
         private const val MAX_NETWORK_ATTEMPTS = 3
         private val RETRY_BACKOFF_MS = longArrayOf(5_000, 15_000)
+
+        /** A single LLM call slower than this flips the batch into
+         *  thinking-off mode (hidden reasoning tokens dominate latency). */
+        private const val SLOW_CALL_MS = 90_000L
+
+        /** Hard wall-clock ceiling for one full batch (tool loop + verifier).
+         *  Generation can never keep the UI in "Generating…" longer. */
+        private const val BATCH_DEADLINE_MS = 20 * 60_000L
+
+        /** Auto-retry cadence after a failed batch: 1 min, then ×5 up to the
+         *  cap, reset on the first success. Prevents the old infinite
+         *  1-minute relaunch loop when the failure is deterministic. */
+        private const val AUTO_RETRY_BASE_MS = 60_000L
+        private const val AUTO_RETRY_MAX_MS = 15 * 60_000L
+
+        fun nextAutoRetryDelay(current: Long): Long = minOf(current * 5, AUTO_RETRY_MAX_MS)
     }
 
     sealed interface GenState {
@@ -73,6 +91,13 @@ class QuestionGenerator(
     private val _state = MutableStateFlow<GenState>(GenState.Idle)
     val state: StateFlow<GenState> = _state
     private var genJob: Job? = null
+
+    /** Set once this batch suffered a slow/timed-out call; every later call
+     *  of the batch is sent with thinking disabled (see [chatAdaptive]). */
+    private var fastMode = false
+
+    private var autoRetryDelayMs = AUTO_RETRY_BASE_MS
+    private var autoRetryJob: Job? = null
 
     /** Called after answers and on app start; no-op when the queue is healthy. */
     fun maybeGenerate() {
@@ -87,7 +112,10 @@ class QuestionGenerator(
             while (true) {
                 val s = settingsStore.current()
                 if (!s.llmConfigured) return@launch
-                if (store.queueSize() >= s.queueThreshold) return@launch
+                if (store.queueSize() >= s.queueThreshold) {
+                    autoRetryDelayMs = AUTO_RETRY_BASE_MS // queue healthy — no retry pending
+                    return@launch
+                }
                 val net = netStore.active()
                 DebugLog.i(TAG, "net='${net.name}' queue ${store.queueSize()} < threshold ${s.queueThreshold} — generating")
                 runGeneration(s)
@@ -128,7 +156,9 @@ class QuestionGenerator(
             _state.value = GenState.Running("Stockpiling trivia from the web (round $rounds)…")
             val target = minOf(HARVEST_TARGET_CAP, (s.queueThreshold - store.queueSize()).coerceAtLeast(20))
             val added = try {
-                harvester.harvestRound(cfg, s, target, net) { note ->
+                // If the personalized pass already hit fast mode, harvest fast too.
+                val eff = if (fastMode && !s.disableThinking) s.copy(disableThinking = true) else s
+                harvester.harvestRound(cfg, eff, target, net) { note ->
                     _state.value = GenState.Running(note)
                 }
             } catch (e: java.io.IOException) {
@@ -160,12 +190,19 @@ class QuestionGenerator(
                 DebugLog.e(TAG, "network error on attempt $attempt", e)
                 if (attempt >= MAX_NETWORK_ATTEMPTS) {
                     val m = "Network problem after $attempt tries: ${e.message}. " +
-                        "Check your connection — will retry automatically in a minute."
+                        "Check your connection — will retry automatically."
                     DebugLog.e(TAG, m)
                     _state.value = GenState.Error(m)
-                    // schedule one more try so the queue eventually refills
-                    scope.launch {
-                        kotlinx.coroutines.delay(60_000)
+                    // Schedule one more try so the queue eventually refills —
+                    // with ESCALATING backoff, so a deterministic failure (a
+                    // model that always outlives the timeout) can't relaunch
+                    // a doomed multi-minute cycle every 60 s forever.
+                    val wait = autoRetryDelayMs
+                    autoRetryDelayMs = nextAutoRetryDelay(autoRetryDelayMs)
+                    DebugLog.w(TAG, "auto-retry scheduled in ${wait / 1000}s (next would be ${autoRetryDelayMs / 1000}s)")
+                    autoRetryJob?.cancel()
+                    autoRetryJob = scope.launch {
+                        kotlinx.coroutines.delay(wait)
                         maybeGenerate()
                     }
                     return
@@ -191,8 +228,56 @@ class QuestionGenerator(
         }
     }
 
+    /** LLM call with adaptive speed. Deep thinking is by far the biggest
+     *  latency driver on reasoning models (10k+ hidden tokens per call — the
+     *  device log showed healthy single calls outliving a 300 s timeout). If
+     *  the user allows thinking but a call is slow or dies on a network
+     *  timeout, the rest of the batch is sent with thinking disabled
+     *  automatically; the user's global setting is never modified. */
+    private suspend fun chatAdaptive(
+        cfg: LlmConfig,
+        messages: List<LlmMessage>,
+        tools: List<LlmToolSpec>,
+        temperature: Float,
+        maxTokens: Int,
+        s: AppSettings
+    ): LlmMessage {
+        val disable = s.disableThinking || fastMode
+        val t0 = System.currentTimeMillis()
+        try {
+            val reply = llm.chat(cfg, messages, tools, temperature, maxTokens, disableThinking = disable)
+            if (!disable && System.currentTimeMillis() - t0 > SLOW_CALL_MS) {
+                fastMode = true
+                DebugLog.w(TAG, "LLM call took ${(System.currentTimeMillis() - t0) / 1000}s — " +
+                    "deep thinking off for the rest of this batch")
+            }
+            return reply
+        } catch (e: java.io.IOException) {
+            if (disable) throw e // already fast — genuine network trouble
+            fastMode = true
+            DebugLog.w(TAG, "LLM call failed after ${(System.currentTimeMillis() - t0) / 1000}s " +
+                    "(${e.message}) — retrying with deep thinking off")
+            _state.value = GenState.Running("Model too slow — continuing without deep thinking…")
+            return llm.chat(cfg, messages, tools, temperature, maxTokens, disableThinking = true)
+        }
+    }
+
     private suspend fun attemptGenerationInner(s: AppSettings) {
+        // Hard ceiling: whatever happens inside (slow reasoning, tool loops,
+        // retries), one batch can never keep the UI in "Generating…" for
+        // longer than BATCH_DEADLINE_MS.
+        val outcome = withTimeoutOrNull(BATCH_DEADLINE_MS) { generateBatch(s) }
+        if (outcome == null) {
+            val m = "Batch gave up after ${BATCH_DEADLINE_MS / 60_000} minutes — " +
+                "will retry automatically with faster settings."
+            DebugLog.e(TAG, m)
+            _state.value = GenState.Error(m)
+        }
+    }
+
+    private suspend fun generateBatch(s: AppSettings) {
         val startedAt = System.currentTimeMillis()
+        fastMode = false // each batch gets one fresh chance at deep thinking
             val net = netStore.active()
             _state.value = GenState.Running("Assembling context…")
             val ctx = ContextBuilder(store).build(net)
@@ -236,12 +321,12 @@ class QuestionGenerator(
                     if (useTools) "Generating batch (web tools available: $budget)…"
                     else "Generating batch…"
                 )
-                val assistant = llm.chat(
+                val assistant = chatAdaptive(
                     cfg, messages,
                     tools = if (useTools) session?.toolSpecs ?: emptyList() else emptyList(),
                     temperature = s.temperature,
                     maxTokens = GEN_MAX_TOKENS,
-                    disableThinking = s.disableThinking
+                    s = s
                 )
                 messages.add(assistant)
                 if (assistant.toolCalls.isEmpty()) {
@@ -322,6 +407,7 @@ class QuestionGenerator(
             }
 
             store.insertQuestions(accepted)
+            autoRetryDelayMs = AUTO_RETRY_BASE_MS // success — calm the retry cadence
             if (parsed.newFrontiers.isNotEmpty()) {
                 store.replaceFrontiers(store.snapshotFrontiers() + parsed.newFrontiers)
             }
@@ -358,12 +444,13 @@ class QuestionGenerator(
                 put("tolerance", q.tolerance ?: JSONObject.NULL)
             })
         }
-        val reply = llm.chat(
+        val reply = chatAdaptive(
             cfg,
             listOf(LlmMessage.user(Prompts.verifierPrompt(arr))),
-            temperature = 0.0f,
-            maxTokens = VERIFY_MAX_TOKENS,
-            disableThinking = s.disableThinking
+            emptyList(),
+            0.0f,
+            VERIFY_MAX_TOKENS,
+            s
         )
         val flags = JSONObject(Prompts.extractJson(reply.content ?: "{}"))
             .optJSONArray("flags") ?: return questions
@@ -409,12 +496,13 @@ class QuestionGenerator(
             }
         if (inputs.isEmpty()) return
 
-        val reply = llm.chat(
+        val reply = chatAdaptive(
             cfg,
             listOf(LlmMessage.user(Prompts.summaryPrompt(inputs))),
-            temperature = 0.3f,
-            maxTokens = SUMMARY_MAX_TOKENS,
-            disableThinking = s.disableThinking
+            emptyList(),
+            0.3f,
+            SUMMARY_MAX_TOKENS,
+            s
         )
         val parsed = Prompts.parseSummaries(reply.content ?: return)
         if (parsed.isEmpty()) return

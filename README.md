@@ -145,6 +145,29 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-23 (12)** — **Fixed "generating forever": streaming LLM calls +
+  adaptive thinking-off + bounded retries.** Diagnosis from the on-device
+  debug log: reasoning models (GLM-5 on z.ai) regularly think for 5+ minutes
+  before the FIRST byte of a non-streaming chat response, so the client's
+  300 s read timeout fired on perfectly healthy calls, was misclassified as
+  a transient network error, and the 60 s auto-retry relaunched the same
+  doomed ~16-minute cycle forever — the UI showed "Generating…" for an hour+
+  (new nets were hit hardest; the podcast recommender was unaffected because
+  its calls are light). Fixes: (1) `LlmClient` now requests `stream: true`
+  and assembles SSE deltas (content, `reasoning_content`, fragmented
+  tool_calls, usage) via `ChatStreamAccumulator` — tokens trickle out while
+  the model thinks, so the HTTP timeout only fires on genuinely stalled
+  streams; servers that ignore/reject streaming fall back to plain-JSON
+  parsing transparently. (2) `QuestionGenerator.chatAdaptive` — if a call
+  with deep thinking enabled is slow (>90 s) or times out, the rest of the
+  batch (verifier, summaries, harvest) is sent with thinking disabled
+  automatically (the user's global setting is untouched); batches drop from
+  many minutes to ~1-2. (3) Hard 20-minute wall-clock ceiling per batch
+  (`BATCH_DEADLINE_MS`) — the UI can never sit in "Generating…" indefinitely
+  again. (4) The post-failure auto-retry now escalates 1 min → 5 min → 15 min
+  (reset on success) instead of hammering every 60 s. Regression tests in
+  `LlmStreamTest` (SSE assembly, tool-call fragment merging, streamed errors,
+  usage, backoff caps).
 - **2026-08-23 (11)** — **Interactive knowledge map + summaries sealed.** The
   "Knowledge state" card (rolling LLM summaries) is gone from the stats
   panel — those summaries can tell the user which questions they got right
