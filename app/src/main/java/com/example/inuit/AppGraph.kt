@@ -3,6 +3,7 @@ package com.example.inuit
 import android.content.Context
 import com.example.inuit.data.QuestionStore
 import com.example.inuit.data.SettingsStore
+import com.example.inuit.data.TailIntegration
 import com.example.inuit.data.gen.Harvester
 import com.example.inuit.data.gen.QuestionGenerator
 import com.example.inuit.data.llm.LlmClient
@@ -18,4 +19,5 @@ class AppGraph(context: Context) {
     val llm = LlmClient()
     val harvester = Harvester(store, llm)
     val generator = QuestionGenerator(store, settingsStore, llm, harvester, appScope)
+    val tail = TailIntegration(context)
 }

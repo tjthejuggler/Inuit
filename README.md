@@ -134,6 +134,17 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-23 (2)** — **Tail habit integration.** Inuit now reports the number
+  of questions answered to the Tail habit tracker (same IPC protocol as WAGS:
+  explicit permission-guarded broadcasts + habits ContentProvider, signature
+  permission `com.example.tail.permission.TAIL_INTEGRATION`). A single
+  count-based habit slot ("Questions answered") is configurable in Settings →
+  Tail app via a searchable picker; every submitted answer fires a +1
+  increment. Retroactive backfill (`ACTION_SET_HABIT_VALUES`, idempotent SET
+  semantics) pushes per-day counts for the entire answer history — everything
+  from the past plus today so far — automatically when a habit is connected,
+  and manually via "Backfill answer history". Aggregation buckets answers by
+  local calendar date, unit-tested. 44 unit tests (3 new).
 - **2026-08-23** — **Resilient batches + adaptive difficulty + web stockpile.**
   Batch generation now runs under a foreground service (`BatchGenService`:
   dataSync type, partial wake lock, START_STICKY) — closing the app or turning

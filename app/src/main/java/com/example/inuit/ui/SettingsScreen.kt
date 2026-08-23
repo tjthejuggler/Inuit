@@ -270,6 +270,9 @@ fun SettingsScreen(
                 )
             }
 
+            // ── Tail app ──────────────────────────────────────────────────
+            TailSettingsSection(viewModel)
+
             // ── Diagnostics ───────────────────────────────────────────────
             DiagnosticsCard()
         }

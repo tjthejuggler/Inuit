@@ -7,6 +7,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Signature permission declared by the Tail habit tracker (same keystore);
+         needed to query its habits ContentProvider and target its receivers. -->
+    <uses-permission android:name="com.example.tail.permission.TAIL_INTEGRATION" />
+
+    <!-- Android 11+ package visibility: allow querying the Tail app -->
+    <queries>
+        <package android:name="com.example.tail" />
+        <provider android:authorities="com.example.tail.provider" />
+    </queries>
 
     <application
         android:name=".InuitApp"

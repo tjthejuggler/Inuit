@@ -7,6 +7,7 @@ import com.example.inuit.AppGraph
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.DebugLog
 import com.example.inuit.data.Grader
+import com.example.inuit.data.HabitEntry
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionSelector
 import com.example.inuit.data.StatsCalculator
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
@@ -110,7 +112,9 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         val q = _currentQuestion.value ?: return
         if (q.id != questionId) return
         val correct = Grader.grade(q, raw)
-        store.recordAnswer(q.id, correct, raw, elapsedMs)
+        val record = store.recordAnswer(q.id, correct, raw, elapsedMs)
+        // Every persisted answer ticks the connected Tail habit by +1.
+        if (record != null) graph.tail.sendQuestionsIncrement()
         graph.generator.maybeGenerate()
         pickNext()
     }
@@ -174,6 +178,103 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun saveMcpJson(json: String) {
         viewModelScope.launch { graph.settingsStore.saveMcpJson(json) }
+    }
+
+    // ── Tail habit integration ───────────────────────────────────────────
+
+    /** The Tail habit connected to the questions-answered slot. */
+    data class HabitSelection(
+        val habitId: String = "",
+        val habitName: String = ""
+    ) {
+        val isSet: Boolean get() = habitId.isNotBlank()
+        val displayName: String get() = habitName.ifBlank { habitId }
+    }
+
+    /** UI state for the Settings → Tail app section. */
+    data class TailUiState(
+        val habitList: List<HabitEntry> = emptyList(),
+        val isLoading: Boolean = false,
+        val appUnavailable: Boolean = false,
+        val selected: HabitSelection = HabitSelection(),
+        val isBackfilling: Boolean = false,
+        val backfillMessage: String? = null,
+        val backfillError: String? = null
+    )
+
+    private val _tailState = MutableStateFlow(
+        TailUiState(
+            selected = HabitSelection(
+                habitId = graph.tail.getHabitId(),
+                habitName = graph.tail.getHabitName()
+            )
+        )
+    )
+    val tailState: StateFlow<TailUiState> = _tailState.asStateFlow()
+
+    /** Loads the habit list from Tail's Content Provider. */
+    fun loadTailHabits() {
+        viewModelScope.launch {
+            _tailState.update { it.copy(isLoading = true, appUnavailable = false) }
+            val habits = graph.tail.fetchHabits()
+            _tailState.update {
+                it.copy(habitList = habits, isLoading = false, appUnavailable = habits.isEmpty())
+            }
+        }
+    }
+
+    /** Connects a habit and immediately backfills it with the full answer history. */
+    fun selectTailHabit(entry: HabitEntry) {
+        graph.tail.setHabit(entry)
+        _tailState.update { it.copy(selected = HabitSelection(entry.habitId, entry.habitName)) }
+        backfillTailHistory(auto = true)
+    }
+
+    fun clearTailHabit() {
+        graph.tail.clearHabit()
+        _tailState.update { it.copy(selected = HabitSelection()) }
+    }
+
+    /** Manual "Backfill" action from Settings. */
+    fun backfillTail() = backfillTailHistory(auto = false)
+
+    /**
+     * Pushes the per-date answer history (everything from the past and today
+     * so far) to the connected Tail habit. Idempotent — Tail SETS each date.
+     */
+    private fun backfillTailHistory(auto: Boolean) {
+        viewModelScope.launch {
+            if (!auto) {
+                _tailState.update { it.copy(isBackfilling = true, backfillMessage = null, backfillError = null) }
+            }
+            try {
+                val result = withContext(Dispatchers.Default) {
+                    graph.tail.backfillAnswers(store.snapshotAnswers())
+                }
+                _tailState.update {
+                    when {
+                        result.dates > 0 -> it.copy(
+                            isBackfilling = false,
+                            backfillMessage = "Sent ${result.dates} dates (${result.answers} answers) to Tail."
+                        )
+                        !auto -> it.copy(
+                            isBackfilling = false,
+                            backfillMessage = "No answers to backfill yet."
+                        )
+                        else -> it.copy(isBackfilling = false)
+                    }
+                }
+            } catch (e: Exception) {
+                DebugLog.e("Tail", "Backfill failed", e)
+                _tailState.update {
+                    it.copy(isBackfilling = false, backfillError = "Backfill failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun clearBackfillMessage() {
+        _tailState.update { it.copy(backfillMessage = null, backfillError = null) }
     }
 
     // ── connectivity tests (Settings screen) ─────────────────────────────
