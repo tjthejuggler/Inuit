@@ -55,7 +55,16 @@ class BatchGenService : Service() {
         super.onCreate()
         DebugLog.i(TAG, "service created — shielding batch generation")
         val graph = (application as InuitApp).graph
-        startInForeground(initialText(graph.generator.state.value))
+        try {
+            startInForeground(initialText(graph.generator.state.value))
+        } catch (e: Exception) {
+            // If we cannot enter the foreground state (OEM / FGS-type quirks),
+            // the service is useless AND the unsatisfied startForeground
+            // requirement would get the app killed — stop immediately instead.
+            DebugLog.e(TAG, "failed to enter foreground — stopping service", e)
+            stopSelf()
+            return
+        }
         acquireWakeLock()
 
         // Covers the START_STICKY restart path: the process died mid-batch,

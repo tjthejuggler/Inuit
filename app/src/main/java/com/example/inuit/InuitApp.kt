@@ -2,6 +2,8 @@ package com.example.inuit
 
 import android.app.Application
 import com.example.inuit.data.DebugLog
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class InuitApp : Application() {
@@ -19,10 +21,28 @@ class InuitApp : Application() {
         // service: closing the app or turning the screen off must never kill
         // a running batch, and a failed batch's scheduled comeback must
         // survive the user leaving during the back-off wait.
+        //
+        // Stops go through ServiceStopGate: a fast serviceNeeded true→false
+        // flicker (healthy launch — every queue already above threshold) must
+        // never reach stopService() before the system has created the service,
+        // or the pending startForeground() requirement goes unmet and Android
+        // kills the app ~10 s later with ForegroundServiceDidNotStartInTime-
+        // Exception (a repeatable crash-on-launch loop; seen on Android 16).
         graph.appScope.launch {
+            val gate = ServiceStopGate()
+            var stopJob: Job? = null
             graph.generator.serviceNeeded.collect { needed ->
-                if (needed) BatchGenService.start(this@InuitApp)
-                else BatchGenService.stop(this@InuitApp)
+                for (action in gate.onNeeded(needed)) when (action) {
+                    ServiceStopGate.Action.StartService ->
+                        BatchGenService.start(this@InuitApp)
+                    ServiceStopGate.Action.CancelStop ->
+                        stopJob?.cancel()
+                    is ServiceStopGate.Action.ScheduleStop ->
+                        stopJob = launch {
+                            delay(action.delayMs)
+                            BatchGenService.stop(this@InuitApp)
+                        }
+                }
             }
         }
     }

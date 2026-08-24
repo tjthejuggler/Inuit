@@ -145,6 +145,25 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-24** — **Fixed crash-on-launch loop (Android 16): foreground
+  service start/stop race.** Every launch kicked `maybeGenerate()`, which
+  flipped `serviceNeeded` true (→ `startForegroundService()`); on a healthy
+  launch — every net's queue above threshold — the check finished in ~100 ms
+  and flipped it back false (→ `stopService()`). When the stop reached the
+  system BEFORE the service had been created, the pending "must call
+  startForeground()" requirement went unsatisfied and Android killed the app
+  ~10 s later with `ForegroundServiceDidNotStartInTimeException`, whose
+  pending ServiceRecord then crashed the next process too (3 crashes in 13 s
+  in the device log; the timing made it a repeatable loop on cold mornings
+  and intermittent otherwise). No user data was involved — clearing the
+  cache/storage would NOT have fixed it. Fix: stops are routed through a new
+  pure `ServiceStopGate` (unit-tested, 5 tests) that NEVER stops immediately
+  — a stop is only scheduled after a 5 s grace (by which time the service
+  exists, is foreground and has usually already stopped itself), and a
+  re-need cancels the pending stop; `BatchGenService.onCreate` additionally
+  guards its foreground entry (failure → stopSelf instead of a crash).
+  Verified on device: 6/6 force-stop cold launches + a live lifecycle trace,
+  zero fatals, app stays alive.
 - **2026-08-23 (16)** — **Refill engine: batches file into the net they
   were generated for, every net is kept stocked in the background, and
   failed batches always come back.** Audit findings that made batches slow
