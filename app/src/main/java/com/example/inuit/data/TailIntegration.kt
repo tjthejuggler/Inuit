@@ -24,6 +24,18 @@ data class HabitEntry(
 )
 
 /**
+ * One recent text-log entry fetched from Tail's Content Provider
+ * (`text_habits/recent`). Tail already bounds what it shares (last 14 days,
+ * ≤3 entries per habit, 300 chars each) — this is deliberately a tiny slice.
+ */
+data class TailTextEntry(
+    val habitName: String,
+    /** Tail's log key: "yyyy-MM-dd HH:mm:ss". */
+    val timestamp: String,
+    val text: String
+)
+
+/**
  * Aggregates answers into per-date counts (`yyyy-MM-dd` → number answered that
  * day) using [zone], matching how Tail's own receiver buckets days via
  * `LocalDate.now()`. Pure and JVM-testable.
@@ -102,6 +114,67 @@ class TailIntegration(context: Context) {
         } catch (e: Exception) {
             // Provider not installed, permission denied, or column mismatch — fail softly.
             DebugLog.w("Tail", "fetchHabits: could not query Tail app — ${e.message}")
+        }
+        results
+    }
+
+    // ── Shared text habits (life-log accents) ─────────────────────────────
+
+    /**
+     * Queries Tail for the text-input habits the user has explicitly shared
+     * with Inuit (Tail: Settings → Integrations → Inuit). Empty when the
+     * integration is off in Tail, Tail is missing, or nothing is shared.
+     */
+    suspend fun fetchSharedTextHabits(): List<HabitEntry> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<HabitEntry>()
+        try {
+            appContext.contentResolver.query(
+                TEXT_HABITS_CONTENT_URI,
+                arrayOf(COL_HABIT_NAME),
+                null, null, null
+            )?.use { cursor ->
+                val nameIdx = cursor.getColumnIndexOrThrow(COL_HABIT_NAME)
+                while (cursor.moveToNext()) {
+                    val name = cursor.getString(nameIdx)
+                    if (!name.isNullOrBlank()) results += HabitEntry(habitId = name, habitName = name)
+                }
+            }
+        } catch (e: Exception) {
+            DebugLog.w("Tail", "fetchSharedTextHabits: query failed — ${e.message}")
+        }
+        results
+    }
+
+    /**
+     * Queries Tail for the most recent entries of every shared text habit.
+     * One provider round-trip per generation batch; the caller filters the
+     * rows down to the habits a specific net selected. [limit] is the
+     * per-habit entry count Tail clamps to 1..5 (default 3).
+     */
+    suspend fun fetchRecentTextEntries(limit: Int = 3): List<TailTextEntry> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<TailTextEntry>()
+        try {
+            val uri = TEXT_HABITS_RECENT_CONTENT_URI.buildUpon()
+                .appendQueryParameter("limit", limit.toString())
+                .build()
+            appContext.contentResolver.query(
+                uri,
+                arrayOf(COL_HABIT_NAME, COL_ENTRY_TS, COL_ENTRY_TEXT),
+                null, null, null
+            )?.use { cursor ->
+                val nameIdx = cursor.getColumnIndexOrThrow(COL_HABIT_NAME)
+                val tsIdx = cursor.getColumnIndexOrThrow(COL_ENTRY_TS)
+                val textIdx = cursor.getColumnIndexOrThrow(COL_ENTRY_TEXT)
+                while (cursor.moveToNext()) {
+                    results += TailTextEntry(
+                        habitName = cursor.getString(nameIdx) ?: continue,
+                        timestamp = cursor.getString(tsIdx) ?: "",
+                        text = cursor.getString(textIdx) ?: ""
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            DebugLog.w("Tail", "fetchRecentTextEntries: query failed — ${e.message}")
         }
         results
     }
@@ -270,6 +343,20 @@ class TailIntegration(context: Context) {
 
         /** Column names returned by the Tail app's Content Provider. */
         const val COL_HABIT_NAME = "habit_name"
+
+        /** Column names of Tail's shared text-habit endpoints. */
+        const val COL_ENTRY_TS = "entry_ts"
+        const val COL_ENTRY_TEXT = "entry_text"
+
+        /**
+         * Content Provider URIs for Tail's shared text-habit endpoints.
+         * Paths: /text_habits (shared habit list) and /text_habits/recent
+         * (most recent entries; optional ?limit=N per-habit count, 1..5).
+         */
+        val TEXT_HABITS_CONTENT_URI: Uri =
+            Uri.parse("content://com.example.tail.provider/text_habits")
+        val TEXT_HABITS_RECENT_CONTENT_URI: Uri =
+            Uri.parse("content://com.example.tail.provider/text_habits/recent")
 
         /** Broadcast action Tail's HabitIncrementReceiver listens for. */
         const val ACTION_INCREMENT = "com.example.tail.ACTION_INCREMENT_HABIT"

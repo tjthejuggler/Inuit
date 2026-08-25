@@ -19,7 +19,8 @@ class NetStoreTest {
                 id = "j1", name = "Juggling", description = "All aspects of juggling",
                 podcastEnabled = false, createdAt = 42L,
                 locationEnabled = true, dateEnabled = true,
-                sourceNetIds = listOf(Net.ALL_ID, "h2")
+                sourceNetIds = listOf(Net.ALL_ID, "h2"),
+                tailTextEnabled = true, tailTextHabits = listOf("Dreams", "Reading")
             )
         )
         val text = NetStore.serialize("j1", nets)
@@ -34,6 +35,8 @@ class NetStoreTest {
         assertTrue(parsed[1].locationEnabled)
         assertTrue(parsed[1].dateEnabled)
         assertEquals(listOf(Net.ALL_ID, "h2"), parsed[1].sourceNetIds)
+        assertTrue(parsed[1].tailTextEnabled)
+        assertEquals(listOf("Dreams", "Reading"), parsed[1].tailTextHabits)
         assertEquals(42L, parsed[1].createdAt)
     }
 
@@ -82,6 +85,8 @@ class NetStoreTest {
         assertFalse(net.locationEnabled)
         assertFalse(net.dateEnabled)
         assertTrue(net.sourceNetIds.isEmpty())
+        assertFalse(net.tailTextEnabled)
+        assertTrue(net.tailTextHabits.isEmpty())
     }
 
     @Test

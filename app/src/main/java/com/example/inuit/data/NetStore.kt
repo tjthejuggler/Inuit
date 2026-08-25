@@ -41,6 +41,13 @@ data class Net(
      *  domains, missed questions) may season this net's questions. The user
      *  picks these; a net never sources itself. */
     val sourceNetIds: List<String> = emptyList(),
+    /** Occasional accent: the user's own recent Tail text-log entries (the
+     *  habits listed in [tailTextHabits]) may lightly seed question angles.
+     *  Off by default; every net opts in individually. */
+    val tailTextEnabled: Boolean = false,
+    /** Which Tail text-input habits this net may draw from — a per-net
+     *  subset of the habits Tail itself is willing to share. */
+    val tailTextHabits: List<String> = emptyList(),
     val createdAt: Long = System.currentTimeMillis()
 ) {
     val isAll: Boolean get() = id == ALL_ID
@@ -53,6 +60,8 @@ data class Net(
         put("loc", locationEnabled)
         put("date", dateEnabled)
         put("srcNets", JSONArray(sourceNetIds))
+        put("tailText", tailTextEnabled)
+        put("tailHabits", JSONArray(tailTextHabits))
         put("ts", createdAt)
     }
 
@@ -70,6 +79,8 @@ data class Net(
             locationEnabled = o.optBoolean("loc", false),
             dateEnabled = o.optBoolean("date", false),
             sourceNetIds = o.optJSONArray("srcNets").toStringList().filter { it.isNotBlank() },
+            tailTextEnabled = o.optBoolean("tailText", false),
+            tailTextHabits = o.optJSONArray("tailHabits").toStringList().filter { it.isNotBlank() }.distinct(),
             createdAt = o.optLong("ts", 0L)
         )
     }
@@ -196,7 +207,9 @@ class NetStore(
                         podcastEnabled = net.podcastEnabled,
                         locationEnabled = net.locationEnabled,
                         dateEnabled = net.dateEnabled,
-                        sourceNetIds = sources
+                        sourceNetIds = sources,
+                        tailTextEnabled = net.tailTextEnabled,
+                        tailTextHabits = net.tailTextHabits.distinct()
                     ) else it
                 }
             } else {
@@ -204,7 +217,8 @@ class NetStore(
                     if (it.id == net.id) {
                         net.copy(
                             name = net.name.trim().ifEmpty { it.name },
-                            sourceNetIds = sources
+                            sourceNetIds = sources,
+                            tailTextHabits = net.tailTextHabits.distinct()
                         )
                     } else it
                 }

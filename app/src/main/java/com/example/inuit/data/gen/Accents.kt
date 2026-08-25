@@ -8,12 +8,15 @@ import android.location.Location
 import android.location.LocationManager
 import androidx.core.content.ContextCompat
 import com.example.inuit.data.AnswerRecord
+import com.example.inuit.data.DebugLog
 import com.example.inuit.data.DomainStat
 import com.example.inuit.data.KnowledgeSummary
 import com.example.inuit.data.Net
 import com.example.inuit.data.NetStore
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionStore
+import com.example.inuit.data.TailIntegration
+import com.example.inuit.data.TailTextEntry
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.Locale
@@ -37,9 +40,15 @@ data class NetAccents(
     /** e.g. "the user is currently near Milan, Italy" — null when off/unavailable. */
     val locationLine: String? = null,
     val dateLines: List<String> = emptyList(),
-    val crossNetLines: List<String> = emptyList()
+    val crossNetLines: List<String> = emptyList(),
+    /** Life-log seeds: the user's own recent Tail text entries, one compact
+     *  line per habit (see [TailTextAccents]). Empty when the net has the
+     *  accent off, nothing is shared, or Tail is unavailable. */
+    val tailTextLines: List<String> = emptyList()
 ) {
-    val isEmpty: Boolean get() = locationLine == null && dateLines.isEmpty() && crossNetLines.isEmpty()
+    val isEmpty: Boolean
+        get() = locationLine == null && dateLines.isEmpty() &&
+            crossNetLines.isEmpty() && tailTextLines.isEmpty()
 }
 
 /** Hard ceiling on accent questions per batch — a sprinkle, never a takeover. */
@@ -176,6 +185,63 @@ object CrossNetAccents {
     private const val PROMPT_CHARS = 100
 }
 
+// ── Tail life-log accent (renderer is pure — unit tested) ──────────────────
+
+/**
+ * Renders the user's recent Tail text-log entries as compact accent lines.
+ *
+ * Dosage mirrors the other accents: at most [MAX_HABITS] habits, at most
+ * [ENTRIES_PER_HABIT] entries each, every entry clipped to [ENTRY_CHARS].
+ * The prompt wraps these in the same strict "seasoning, not the meal" block,
+ * so the net's own material always dominates the batch.
+ */
+object TailTextAccents {
+
+    /** Entries fetched from Tail per habit (Tail caps at 3 anyway). */
+    private const val FETCH_LIMIT = 3
+
+    /** Habits rendered into the prompt, even if more are selected. */
+    const val MAX_HABITS = 3
+
+    /** Entries shown per habit line. */
+    const val ENTRIES_PER_HABIT = 2
+
+    /** Characters per entry inside the line. */
+    const val ENTRY_CHARS = 140
+
+    /**
+     * One line per selected habit that actually has entries:
+     * `- LOG "Dreams": "flying over the bay" · "late for a train"`
+     * Habits without entries (or not selected for this net) are dropped.
+     */
+    fun lines(entries: List<TailTextEntry>, selectedHabits: Collection<String>): List<String> {
+        val selected = selectedHabits.toSet()
+        return entries
+            .groupBy { it.habitName }
+            .filterKeys { it in selected }
+            .entries
+            .asSequence()
+            .sortedBy { it.key } // stable, alphabetical — deterministic prompts
+            .take(MAX_HABITS)
+            .map { (habit, rows) ->
+                val quoted = rows
+                    .sortedByDescending { it.timestamp }
+                    .take(ENTRIES_PER_HABIT)
+                    .joinToString(" · ") { "\"${clip(it.text)}\"" }
+                "- LOG \"$habit\": $quoted"
+            }
+            .toList()
+    }
+
+    private fun clip(text: String): String {
+        val flat = text.replace('\n', ' ').trim()
+        return if (flat.length <= ENTRY_CHARS) flat else flat.take(ENTRY_CHARS) + "…"
+    }
+
+    /** Per-habit fetch limit handed to Tail's provider. */
+    val fetchLimit: Int get() = FETCH_LIMIT
+}
+
 // ── Location accent (Android side) ────────────────────────────────────────
 
 /** Where the phone currently is, at region precision. */
@@ -257,16 +323,34 @@ class LocationProvider(private val context: Context) {
 class AccentsBuilder(
     private val locationProvider: LocationProvider,
     private val netStore: NetStore,
-    private val store: QuestionStore
+    private val store: QuestionStore,
+    /** Tail bridge; null keeps the life-log accent permanently off. */
+    private val tail: TailIntegration? = null
 ) {
 
-    fun build(net: Net): NetAccents {
+    suspend fun build(net: Net): NetAccents {
         // Location doubles as the hemisphere hint for the date accent.
         val place = if (net.locationEnabled) locationProvider.currentPlace() else null
         val locationLine = place?.let { "the user is currently near ${it.description}" }
         val dateLines = if (net.dateEnabled) DateAccents.lines(LocalDate.now(), place?.latitude) else emptyList()
         val crossNetLines = if (net.sourceNetIds.isEmpty()) emptyList() else crossNetLines(net)
-        return NetAccents(locationLine, dateLines, crossNetLines)
+        val tailTextLines =
+            if (net.tailTextEnabled && net.tailTextHabits.isNotEmpty()) tailTextLines(net) else emptyList()
+        return NetAccents(locationLine, dateLines, crossNetLines, tailTextLines)
+    }
+
+    /**
+     * Pulls the recent shared entries from Tail and renders them through the
+     * pure [TailTextAccents] renderer. Any provider failure just drops the
+     * accent for this batch — generation itself must never fail because of
+     * the bridge.
+     */
+    private suspend fun tailTextLines(net: Net): List<String> = try {
+        val entries = tail?.fetchRecentTextEntries(TailTextAccents.fetchLimit) ?: emptyList()
+        TailTextAccents.lines(entries, net.tailTextHabits)
+    } catch (e: Exception) {
+        DebugLog.w("Accents", "tail text accent failed (continuing without): ${e.message}")
+        emptyList()
     }
 
     private fun crossNetLines(net: Net): List<String> {

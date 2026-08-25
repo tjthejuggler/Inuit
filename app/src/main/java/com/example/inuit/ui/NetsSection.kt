@@ -30,6 +30,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,10 +61,17 @@ import com.example.inuit.data.Net
 fun NetsSection(viewModel: MainViewModel) {
     val nets by viewModel.nets.collectAsStateWithLifecycle()
     val activeNet by viewModel.activeNet.collectAsStateWithLifecycle()
+    val sharedTailHabits by viewModel.sharedTextHabits.collectAsStateWithLifecycle()
 
     var editing by remember { mutableStateOf<Net?>(null) }     // edit dialog
     var creating by remember { mutableStateOf(false) }         // create dialog
     var confirmingDelete by remember { mutableStateOf<Net?>(null) }
+
+    // Refresh the Tail-shared habit list whenever a net dialog opens, so the
+    // life-log selector always reflects what Tail currently shares.
+    LaunchedEffect(creating, editing) {
+        if (creating || editing != null) viewModel.loadSharedTextHabits()
+    }
 
     SectionCard(
         title = "Nets",
@@ -97,6 +105,7 @@ fun NetsSection(viewModel: MainViewModel) {
             title = "New net",
             initial = null,
             otherNets = nets,
+            sharedTailHabits = sharedTailHabits,
             onDismiss = { creating = false },
             onSave = { draft ->
                 creating = false
@@ -109,6 +118,7 @@ fun NetsSection(viewModel: MainViewModel) {
             title = if (net.isAll) "Edit All net" else "Edit net",
             initial = net,
             otherNets = nets.filter { it.id != net.id },
+            sharedTailHabits = sharedTailHabits,
             onDismiss = { editing = null },
             onSave = { draft ->
                 editing = null
@@ -212,6 +222,7 @@ private fun NetEditDialog(
     title: String,
     initial: Net?,
     otherNets: List<Net>,
+    sharedTailHabits: List<String>,
     onDismiss: () -> Unit,
     onSave: (Net) -> Unit
 ) {
@@ -221,6 +232,12 @@ private fun NetEditDialog(
     var podcastEnabled by rememberSaveable { mutableStateOf(initial?.podcastEnabled ?: true) }
     var locationEnabled by rememberSaveable { mutableStateOf(initial?.locationEnabled ?: false) }
     var dateEnabled by rememberSaveable { mutableStateOf(initial?.dateEnabled ?: false) }
+    var tailTextEnabled by rememberSaveable { mutableStateOf(initial?.tailTextEnabled ?: false) }
+    // Habit names can contain commas — join with newlines (names are single-line).
+    var tailHabitsCsv by rememberSaveable {
+        mutableStateOf(initial?.tailTextHabits?.joinToString("\n") ?: "")
+    }
+    val selectedTailHabits = tailHabitsCsv.split('\n').filter { it.isNotBlank() }
     // Set<String> isn't Bundle-saveable; keep the selection as a CSV of ids.
     var sourceIdsCsv by rememberSaveable {
         mutableStateOf(initial?.sourceNetIds?.joinToString(",") ?: "")
@@ -238,6 +255,12 @@ private fun NetEditDialog(
         if (id in current) current.remove(id)
         else if (current.size < MAX_SOURCE_NETS) current.add(id)
         sourceIdsCsv = current.joinToString(",")
+    }
+
+    fun toggleTailHabit(name: String) {
+        val current = selectedTailHabits.toMutableList()
+        if (name in current) current.remove(name) else current.add(name)
+        tailHabitsCsv = current.joinToString("\n")
     }
 
     AlertDialog(
@@ -363,6 +386,56 @@ private fun NetEditDialog(
                     }
                     Switch(checked = dateEnabled, onCheckedChange = { dateEnabled = it })
                 }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .padding(vertical = 2.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Tail life-log accents", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Occasionally draw inspiration from your recent " +
+                                "Tail notes (most recent entries only)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(checked = tailTextEnabled, onCheckedChange = { tailTextEnabled = it })
+                }
+                if (tailTextEnabled) {
+                    if (sharedTailHabits.isEmpty()) {
+                        Text(
+                            "Nothing shared yet — pick text-input habits in Tail: " +
+                                "Settings → Integrations → Inuit.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            "Shared habits this net may draw on:",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        sharedTailHabits.forEach { habit ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { toggleTailHabit(habit) }
+                                    .padding(vertical = 1.dp)
+                            ) {
+                                Checkbox(
+                                    checked = habit in selectedTailHabits,
+                                    onCheckedChange = { toggleTailHabit(habit) }
+                                )
+                                Text(habit, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
                 if (otherNets.isNotEmpty()) {
                     Text("Pull knowledge from other nets", style = MaterialTheme.typography.bodyMedium)
                     Text(
@@ -419,6 +492,8 @@ private fun NetEditDialog(
                         podcastEnabled = podcastEnabled,
                         locationEnabled = locationEnabled,
                         dateEnabled = dateEnabled,
+                        tailTextEnabled = tailTextEnabled,
+                        tailTextHabits = selectedTailHabits,
                         sourceNetIds = selectedSources
                     )
                     onSave(draft)

@@ -332,6 +332,17 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
+    /** Text habits Tail currently shares for life-log accents (habit names). */
+    private val _sharedTextHabits = MutableStateFlow<List<String>>(emptyList())
+    val sharedTextHabits: StateFlow<List<String>> = _sharedTextHabits.asStateFlow()
+
+    /** Loads the text habits the user shared in Tail (Tail: Settings → Integrations → Inuit). */
+    fun loadSharedTextHabits() {
+        viewModelScope.launch {
+            _sharedTextHabits.value = graph.tail.fetchSharedTextHabits().map { it.habitName }
+        }
+    }
+
     /** Connects a habit and immediately backfills it with the full answer history. */
     fun selectTailHabit(entry: HabitEntry) {
         graph.tail.setHabit(entry)

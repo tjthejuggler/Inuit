@@ -165,6 +165,14 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
                 accents.crossNetLines.forEach { sb.append(it).append('\n') }
                 sb.append("  → anchor at most one question in something they know/missed there — but the question itself must stay STRICTLY inside this net's scope (a bridge, not a departure).\n")
             }
+            if (accents.tailTextLines.isNotEmpty()) {
+                sb.append("- LIFE-LOG (the user's own recent notes from their habit tracker):\n")
+                accents.tailTextLines.forEach { sb.append("  ").append(it).append('\n') }
+                sb.append("  → these are personal seeds, NOT quiz material: at most one question may draw ")
+                    .append("light inspiration from them (a topic, entity or theme a note mentions), ")
+                    .append("and it must still fit this net's scope with a verifiable answer. ")
+                    .append("Never quote the notes back and never ask about the user personally.\n")
+            }
         }
 
         val subCount = if (ctx.unknownGroups.isEmpty()) 0 else (batchSize * 0.4).toInt().coerceAtLeast(3)

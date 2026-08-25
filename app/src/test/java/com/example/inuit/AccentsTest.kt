@@ -4,9 +4,11 @@ import com.example.inuit.data.AnswerRecord
 import com.example.inuit.data.DomainStat
 import com.example.inuit.data.KnowledgeSummary
 import com.example.inuit.data.Question
+import com.example.inuit.data.TailTextEntry
 import com.example.inuit.data.gen.CrossNetAccents
 import com.example.inuit.data.gen.DateAccents
 import com.example.inuit.data.gen.NetAccents
+import com.example.inuit.data.gen.TailTextAccents
 import com.example.inuit.data.gen.accentQuestionCap
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,6 +37,7 @@ class AccentsTest {
         assertFalse(NetAccents(locationLine = "near Rome").isEmpty)
         assertFalse(NetAccents(dateLines = listOf("today")).isEmpty)
         assertFalse(NetAccents(crossNetLines = listOf("- NET \"X\"")).isEmpty)
+        assertFalse(NetAccents(tailTextLines = listOf("- LOG \"Dreams\"")).isEmpty)
     }
 
     // ── date accent ───────────────────────────────────────────────────────
@@ -142,5 +145,82 @@ class AccentsTest {
         val prompts = CrossNetAccents.recentMissedPrompts(listOf(q1), emptyList(), limit = 5)
         assertTrue(prompts.isEmpty())
         assertNull(prompts.firstOrNull())
+    }
+
+    // ── Tail life-log accent ──────────────────────────────────────────────
+
+    private fun entry(habit: String, ts: String, text: String) =
+        TailTextEntry(habitName = habit, timestamp = ts, text = text)
+
+    @Test
+    fun `tail text lines render one compact line per selected habit newest first`() {
+        val lines = TailTextAccents.lines(
+            listOf(
+                entry("Dreams", "2026-08-24 07:30:00", "flying over the bay"),
+                entry("Dreams", "2026-08-25 07:10:00", "late for a train"),
+                entry("Reading", "2026-08-25 09:00:00", "finished Dune chapter 4")
+            ),
+            selectedHabits = listOf("Dreams", "Reading")
+        )
+        assertEquals(2, lines.size)
+        val dreams = lines.first { it.contains("Dreams") }
+        assertTrue(dreams.startsWith("- LOG \"Dreams\":"))
+        // newest entry first within the line
+        assertTrue(dreams.indexOf("late for a train") < dreams.indexOf("flying over the bay"))
+        assertTrue(lines.any { it.startsWith("- LOG \"Reading\":") && it.contains("Dune") })
+    }
+
+    @Test
+    fun `tail text lines drop habits the net did not select`() {
+        val lines = TailTextAccents.lines(
+            listOf(
+                entry("Dreams", "2026-08-25 07:10:00", "flying"),
+                entry("Secret", "2026-08-25 08:00:00", "private thought")
+            ),
+            selectedHabits = listOf("Dreams")
+        )
+        assertEquals(1, lines.size)
+        assertFalse(lines[0].contains("Secret"))
+    }
+
+    @Test
+    fun `tail text lines cap habits and entries per habit`() {
+        val entries = (1..4).map { n ->
+            entry("Habit$n", "2026-08-25 0$n:00:00", "note $n")
+        } + (1..3).map { n ->
+            entry("Habit1", "2026-08-2$n 0$n:00:00", "extra $n")
+        }
+        val lines = TailTextAccents.lines(entries, selectedHabits = listOf("Habit1", "Habit2", "Habit3", "Habit4"))
+        assertEquals(TailTextAccents.MAX_HABITS, lines.size) // alphabetical: Habit1..Habit3
+        val habit1 = lines.first { it.contains("Habit1") }
+        // only ENTRIES_PER_HABIT quoted entry snippets appear on the line
+        // (the habit name itself is also quoted, so match entry texts)
+        val quotedCount = Regex("\"(note|extra) \\d+\"").findAll(habit1).count()
+        assertEquals(TailTextAccents.ENTRIES_PER_HABIT, quotedCount)
+    }
+
+    @Test
+    fun `tail text lines flatten newlines and clip long entries`() {
+        val long = "x".repeat(TailTextAccents.ENTRY_CHARS + 50)
+        val lines = TailTextAccents.lines(
+            listOf(entry("Dreams", "2026-08-25 07:00:00", "line one\nline two\n$long")),
+            selectedHabits = listOf("Dreams")
+        )
+        assertEquals(1, lines.size)
+        assertFalse(lines[0].contains('\n')) // single flat line
+        assertTrue(lines[0].endsWith("…\""))  // clipped, then closed by the quote
+        assertTrue(lines[0].length < 300)    // stays compact for the prompt
+    }
+
+    @Test
+    fun `tail text lines with no shared entries are empty`() {
+        assertTrue(TailTextAccents.lines(emptyList(), selectedHabits = listOf("Dreams")).isEmpty())
+        // entries exist but the net selected nothing
+        assertTrue(
+            TailTextAccents.lines(
+                listOf(entry("Dreams", "2026-08-25 07:00:00", "flying")),
+                selectedHabits = emptyList()
+            ).isEmpty()
+        )
     }
 }
