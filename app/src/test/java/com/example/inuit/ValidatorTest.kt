@@ -101,6 +101,67 @@ class ValidatorTest {
         assertEquals("root1", result.questions[0].rootId)
     }
 
+    // ── true/false twin pairs (50/50 answer balance) ─────────────────────
+
+    private fun pairJson(
+        trueStmt: String = "Mount Everest is the highest mountain above sea level.",
+        falseStmt: String = "K2 is the highest mountain above sea level.",
+        domains: String = """["Geography > Mountains"]"""
+    ): String = """
+        {"type":"true_false","pair":{"true":"$trueStmt","false":"$falseStmt"},
+         "domains":$domains,"difficulty":2,"confidence":0.95}
+    """.trimIndent()
+
+    @Test
+    fun `pair true_false yields one question whose prompt and answer match the chosen twin`() {
+        val raw = """{"questions":[${pairJson()}]}"""
+        val result = Validator.parseAndValidate(raw, emptyList(), settings, emptyMap())
+        assertEquals(1, result.questions.size)
+        val q = result.questions[0]
+        assertEquals(QuestionType.TRUE_FALSE, q.type)
+        assertNotNull(q.answerBool)
+        val expectedPrompt = if (q.answerBool!!) "Mount Everest is the highest mountain above sea level."
+        else "K2 is the highest mountain above sea level."
+        assertEquals(expectedPrompt, q.prompt)
+    }
+
+    @Test
+    fun `identical pair twins are rejected`() {
+        val raw = """{"questions":[${pairJson(
+            trueStmt = "The Nile is the longest river in Africa.",
+            falseStmt = "The Nile is the longest river in Africa."
+        )}]}"""
+        val result = Validator.parseAndValidate(raw, emptyList(), settings, emptyMap())
+        assertEquals(0, result.questions.size)
+        assertTrue(result.dropReasons.any { it.contains("identical") })
+    }
+
+    @Test
+    fun `balancer keeps long-run ratio near half and corrects existing drift`() {
+        // Store already heavily skewed toward true answers (10 true, 0 false):
+        // the balancer must push back toward false.
+        val skewed = List(10) {
+            com.example.inuit.data.Question(
+                type = QuestionType.TRUE_FALSE, answerBool = true, prompt = "existing true #$it"
+            )
+        }
+        val balancer = Validator.TfBalancer(skewed)
+        var trues = 0
+        val n = 2000
+        repeat(n) { if (balancer.pick()) trues++ }
+        // The balancer must erase the 10-true head start: after n picks the
+        // TOTAL counts (existing + picked) must be near equal.
+        val totalTrues = trues + 10
+        val totalFalses = n - trues
+        assertTrue("trues=$trues", kotlin.math.abs(totalTrues - totalFalses) <= 80)
+
+        // From a balanced start the coin is fair.
+        val fair = Validator.TfBalancer(emptyList())
+        var t = 0
+        repeat(n) { if (fair.pick()) t++ }
+        assertTrue("t=$t", t in (n * 0.44).toInt()..(n * 0.56).toInt())
+    }
+
     @Test
     fun extractJsonHandlesFences() {
         val fenced = "Sure! Here you go:\n```json\n{\"questions\":[]}\n```\nDone."

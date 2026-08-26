@@ -47,6 +47,7 @@ ABSOLUTE RULES:
    - Prefer multiple_choice and true_false formats for sub-questions — recognition scaffolds recall; save numeric/fill_blank for the target itself.
    - Set "parent_hint" to the [U#] marker of the target you are decomposing.
 4. VARIETY — mix all four types (true_false, multiple_choice, numeric, fill_blank). Mix difficulties 1-5 (1 = most people know; 5 = expert). Include famous trivia AND delightfully obscure but rock-solid facts (statistics, magnitudes, records, etymology). At least half the batch must open subdomains never present in the context — breadth of the knowledge space matters more than depth.
+4b. TRUE_FALSE PAIRS — every true_false question MUST be emitted as a PAIR of twin statements about the same fact: "pair": {"true": "...", "false": "..."}. The false twin must be the SAME sentence with exactly one detail changed (a name, date, number, place or relationship) so that it is definitely, unambiguously FALSE yet equally plausible to someone who doesn't know the fact — never ambiguous, never trivially absurd. Do NOT emit an "answer" field for true_false; omit "prompt" (the app randomly picks one twin to show, which keeps the user's true/false answers at a perfect 50/50 split). Both twins must independently satisfy Rule 1's factual rigor.
 5. DOMAIN TAGS — tag every question with 1-3 hierarchical paths using " > " separators (e.g. "Science > Physics > Optics"). Reuse existing paths from the context when they fit; create deeper/more specific paths when the question is narrower. Top level must be one of the broad realms seen in context or an equally broad new one. Inside a custom net, paths instead start with the net's name plus a subtopic — follow the NET DOMAIN TAGGING block above exactly.
 6. WEB TOOLS — you may call the provided web search / web reader tools AT MOST $mcpBudget TIMES TOTAL for this whole batch, and only to (a) ground obscure statistics you are not already certain of, or (b) double-check a borderline fact. Never for common knowledge. If the budget is 0 or exhausted, generate only from certain knowledge.
 7. CONFIDENCE — report honest calibrated certainty per question (0-1). Questions below the threshold are discarded; do not inflate.
@@ -58,9 +59,10 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
   "questions": [
     {
       "type": "true_false" | "multiple_choice" | "numeric" | "fill_blank",
-      "prompt": "question text, self-contained, <= 280 chars",
+      "prompt": "question text, self-contained, <= 280 chars",   // NOT for true_false (use "pair")
+      "pair": {"true": "...", "false": "..."}, // true_false only: twin statements, see rule 4b
       "choices": ["...","...","..."],        // multiple_choice only: 4 options, plausible, no 'all of the above'
-      "answer": <boolean | integer index | number | string>,   // per type
+      "answer": <integer index | number | string>,   // multiple_choice / numeric / fill_blank only
       "tolerance": 0.5,                       // numeric only: absolute tolerance (required for non-integers)
       "unit": "km/h",                         // numeric only, optional hint shown to the user
       "accepted": ["alt answer"],             // fill_blank only: extra accepted spellings/variants
@@ -283,7 +285,7 @@ RULES:
 1. SOURCE-GROUNDED — only emit questions whose answer is clearly stated in the content you fetched. Do NOT invent questions from thin air in this mode; if a fetched page is thin, search again within budget. Skip anything ambiguous, opinion-based, time-sensitive ("current champion"), or contested.
 2. VOLUME — aim for the requested count. Prefer big lists (100+ questions pages) and convert as many usable items as possible.
 3. TAGGING — tag every question with 1-3 hierarchical domain paths ("Science > Physics > Optics"). Set difficulty by GENERAL knowledge standards (1 = most people know, 5 = expert), not for any particular user.
-4. FORMAT — prefer multiple_choice (generate 4 plausible wrong options yourself; no 'all of the above'); also use true_false and fill_blank where they fit naturally. Self-contained prompts <= 280 chars.
+4. FORMAT — prefer multiple_choice (generate 4 plausible wrong options yourself; no 'all of the above'); also use true_false and fill_blank where they fit naturally. Self-contained prompts <= 280 chars. Every true_false item MUST be a PAIR of twins per the OUTPUT spec: "pair": {"true": "...", "false": "..."} — the same statement with exactly one detail changed so the false twin is definitely yet non-obviously false; no "prompt"/"answer" fields for true_false (the app picks a twin at random for a perfect 50/50 answer split).
 5. CONFIDENCE — 0.9-1.0 only when the fetched source clearly states the answer; otherwise skip the question.
 6. VARIETY — spread across many domains; avoid making more than ~4 questions about the same single subject.
 
@@ -291,10 +293,11 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
 {
   "questions": [
     {
-      "type": "true_false" | "multiple_choice" | "numeric" | "fill_blank",
-      "prompt": "question text, self-contained, <= 280 chars",
-      "choices": ["...","...","..."],
-      "answer": <boolean | integer index | number | string>,
+     "type": "true_false" | "multiple_choice" | "numeric" | "fill_blank",
+     "prompt": "question text, self-contained, <= 280 chars",   // NOT for true_false (use "pair")
+     "pair": {"true": "...", "false": "..."}, // true_false only: twin statements
+     "choices": ["...","...","..."],
+     "answer": <integer index | number | string>,
       "tolerance": 0.5,
       "unit": "km/h",
       "accepted": ["alt answer"],

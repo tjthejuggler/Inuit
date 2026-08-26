@@ -44,6 +44,7 @@ object Validator {
             ?: return Result(emptyList(), 0, frontiers(root),
                 listOf("JSON had no \"questions\" array (keys=${root.keys().asSequence().take(6).joinToString()})"))
 
+        val tfBalancer = TfBalancer(existingQuestions)
         val seenPrompts = existingQuestions
             .takeLast(1200)
             .map { wordSet(it.prompt) }
@@ -55,7 +56,7 @@ object Validator {
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i)
                 ?: continue.also { reasons.add("#$i: not a JSON object") }
-            val built = buildQuestion(o, settings, markerToQuestion, net)
+            val built = buildQuestion(o, settings, markerToQuestion, net, tfBalancer)
             val q = built.first
             if (q == null) {
                 dropped++
@@ -87,11 +88,16 @@ object Validator {
         o: JSONObject,
         settings: AppSettings,
         markerToQuestion: Map<String, Question>,
-        net: Net? = null
+        net: Net? = null,
+        tfBalancer: TfBalancer = TfBalancer(emptyList())
     ): Pair<Question?, String?> {
         val type = QuestionType.from(o.optString("type"))
-        val prompt = o.optString("prompt").trim()
-        if (prompt.length !in 8..320) return null to "prompt length ${prompt.length} outside 8..320"
+        val pair = o.optJSONObject("pair")
+        var prompt = o.optString("prompt").trim()
+        // true_false pairs carry their own prompts (the twins); the top-level
+        // "prompt" field is intentionally absent for them.
+        if (prompt.length !in 8..320 && !(type == QuestionType.TRUE_FALSE && pair != null))
+            return null to "prompt length ${prompt.length} outside 8..320"
         val difficulty = o.optInt("difficulty", 3).coerceIn(1, 5)
         val confidence = o.optDouble("confidence", 0.0)
         if (confidence < settings.minConfidence)
@@ -125,15 +131,38 @@ object Validator {
 
         when (type) {
             QuestionType.TRUE_FALSE -> {
-                val a = o.opt("answer")
-                answerBool = when (a) {
-                    is Boolean -> a
-                    is String -> when (a.trim().lowercase()) {
-                        "true", "t", "yes" -> true
-                        "false", "f", "no" -> false
-                        else -> return null to "true_false answer unrecognised: \"$a\""
+                if (pair != null) {
+                    // Twin-pair format (see Prompts rule 4b): the model emits a
+                    // TRUE statement and a plausible FALSE twin; the balancer
+                    // picks which one becomes the served question, keeping the
+                    // long-run true/false answer ratio near 50/50.
+                    val trueStmt = pair.optString("true").trim()
+                    val falseStmt = pair.optString("false").trim()
+                    if (trueStmt.length !in 8..320)
+                        return null to "pair true twin length ${trueStmt.length} outside 8..320"
+                    if (falseStmt.length !in 8..320)
+                        return null to "pair false twin length ${falseStmt.length} outside 8..320"
+                    if (Grader.normalize(trueStmt) == Grader.normalize(falseStmt))
+                        return null to "pair twins are identical"
+                    if (tfBalancer.pick()) {
+                        answerBool = true
+                        prompt = trueStmt
+                    } else {
+                        answerBool = false
+                        prompt = falseStmt
                     }
-                    else -> return null to "true_false answer wrong type (${a?.javaClass?.simpleName})"
+                } else {
+                    // Legacy format: a single statement with an explicit answer.
+                    val a = o.opt("answer")
+                    answerBool = when (a) {
+                        is Boolean -> a
+                        is String -> when (a.trim().lowercase()) {
+                            "true", "t", "yes" -> true
+                            "false", "f", "no" -> false
+                            else -> return null to "true_false answer unrecognised: \"$a\""
+                        }
+                        else -> return null to "true_false answer wrong type (${a?.javaClass?.simpleName})"
+                    }
                 }
             }
 
@@ -265,6 +294,33 @@ object Validator {
 
     fun wordSet(s: String): Set<String> =
         Grader.normalize(s).split(" ").filter { it.length > 2 }.toSet()
+
+    /**
+     * Decides which twin of a true/false pair becomes the served question.
+     *
+     * Base rate is a fair coin (50/50 in expectation), biased toward whichever
+     * answer is currently under-represented so short-run drift is actively
+     * corrected: each excess "true" in the store lowers p(true) by 10pp
+     * (capped at 10%..90%). Seeded from the existing question snapshot, so
+     * the balance carries across batches and app restarts — the app is thus
+     * self-aware of its own true/false ratio without extra persistence.
+     */
+    class TfBalancer(existing: List<Question>) {
+        private var trues = existing.count {
+            it.type == QuestionType.TRUE_FALSE && it.answerBool == true
+        }
+        private var falses = existing.count {
+            it.type == QuestionType.TRUE_FALSE && it.answerBool == false
+        }
+
+        /** Returns true when the TRUE twin should be served. */
+        fun pick(): Boolean {
+            val pTrue = (0.5 - (trues - falses) * 0.1).coerceIn(0.1, 0.9)
+            val pickTrue = Math.random() < pTrue
+            if (pickTrue) trues++ else falses++
+            return pickTrue
+        }
+    }
 
     fun jaccard(a: Set<String>, b: Set<String>): Double {
         if (a.isEmpty() || b.isEmpty()) return 0.0

@@ -145,6 +145,17 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-08-26** — **True/false questions now guarantee a ~50/50 answer
+  split.** The generator (batch + web harvest) must emit every true/false
+  item as a PAIR of twin statements (`"pair": {"true": ..., "false": ...}`
+  — same sentence, one detail changed). At validation time a new
+  `Validator.TfBalancer` picks which twin becomes the served question: a
+  fair coin biased toward whichever answer is currently under-represented
+  in the store (each excess pick shifts probability 10 pp, floored at
+  10%), so the split is 50/50 in expectation AND short-run drift is
+  actively corrected — no extra persistence needed, the balance is derived
+  from the existing question snapshot. Legacy single-statement true/false
+  output still parses (backward compatibility).
 - **2026-08-24** — **Fixed crash-on-launch loop (Android 16): foreground
   service start/stop race.** Every launch kicked `maybeGenerate()`, which
   flipped `serviceNeeded` true (→ `startForegroundService()`); on a healthy
