@@ -8,8 +8,8 @@ import com.example.inuit.data.TailTextEntry
 import com.example.inuit.data.gen.CrossNetAccents
 import com.example.inuit.data.gen.DateAccents
 import com.example.inuit.data.gen.NetAccents
+import com.example.inuit.data.SourceMix
 import com.example.inuit.data.gen.TailTextAccents
-import com.example.inuit.data.gen.accentQuestionCap
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -20,15 +20,41 @@ import java.time.LocalDate
 /** Pure tests for the occasional-accent context (no Android dependencies). */
 class AccentsTest {
 
-    // ── dosage cap ────────────────────────────────────────────────────────
+    // ── source mix normalization ──────────────────────────────────────────
 
     @Test
-    fun `accent question cap stays a sprinkle across batch sizes`() {
-        assertEquals(1, accentQuestionCap(1))
-        assertEquals(1, accentQuestionCap(6))
-        assertEquals(2, accentQuestionCap(12))
-        assertEquals(3, accentQuestionCap(18))
-        assertEquals(3, accentQuestionCap(40)) // hard ceiling
+    fun `normalize completes the core remainder and sums to 100`() {
+        val mix = SourceMix.normalize(mapOf(SourceMix.LOCATION to 20, SourceMix.DATE to 10))
+        assertEquals(70, mix[SourceMix.CORE])
+        assertEquals(20, mix[SourceMix.LOCATION])
+        assertEquals(10, mix[SourceMix.DATE])
+        assertEquals(0, mix[SourceMix.CROSS_NET])
+        assertEquals(100, mix.values.sum())
+    }
+
+    @Test
+    fun `normalize clamps accents combined to the core floor`() {
+        val mix = SourceMix.normalize(
+            mapOf(
+                SourceMix.LOCATION to 60,
+                SourceMix.DATE to 60,
+                SourceMix.CROSS_NET to 60,
+                SourceMix.TAIL_TEXT to 60
+            )
+        )
+        assertTrue(mix[SourceMix.CORE]!! >= 100 - SourceMix.MAX_TOTAL_ACCENTS)
+        assertEquals(100, mix.values.sum())
+        assertTrue(mix.values.all { it >= 0 })
+    }
+
+    @Test
+    fun `legacy toggles become small sprinkle shares`() {
+        val mix = SourceMix.legacy(location = true, date = false, crossNet = true, tailText = true)
+        assertEquals(SourceMix.LEGACY_ACCENT_PERCENT, mix[SourceMix.LOCATION])
+        assertEquals(0, mix[SourceMix.DATE])
+        assertEquals(SourceMix.LEGACY_ACCENT_PERCENT, mix[SourceMix.CROSS_NET])
+        assertEquals(SourceMix.LEGACY_ACCENT_PERCENT, mix[SourceMix.TAIL_TEXT])
+        assertEquals(100 - 3 * SourceMix.LEGACY_ACCENT_PERCENT, mix[SourceMix.CORE])
     }
 
     @Test

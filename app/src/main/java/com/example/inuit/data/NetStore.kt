@@ -31,26 +31,34 @@ data class Net(
     /** Podcast recommendations can be disabled per net (some scopes have
      *  no meaningful podcast coverage). */
     val podcastEnabled: Boolean = true,
-    /** Occasional accent: sprinkle in questions tied to the phone's current
-     *  location (region history/geography). Needs the location permission. */
+    /** Accent availability gates, kept in sync with [sourceWeights]
+     *  (weight > 0 ⇔ enabled). They gate PERMISSIONS and data selection
+     *  (location permission, Tail habits, source nets); the actual per-batch
+     *  DOSAGE comes from [mix]. */
     val locationEnabled: Boolean = false,
-    /** Occasional accent: sprinkle in questions tied to the current date
-     *  (today, this date in history, this year in past centuries). */
     val dateEnabled: Boolean = false,
-    /** Occasional accent: other nets whose knowledge base (summaries, weak
-     *  domains, missed questions) may season this net's questions. The user
-     *  picks these; a net never sources itself. */
+    /** Other nets whose knowledge base (summaries, weak domains, missed
+     *  questions) may season this net's questions. The user picks these;
+     *  a net never sources itself. */
     val sourceNetIds: List<String> = emptyList(),
-    /** Occasional accent: the user's own recent Tail text-log entries (the
-     *  habits listed in [tailTextHabits]) may lightly seed question angles.
-     *  Off by default; every net opts in individually. */
     val tailTextEnabled: Boolean = false,
     /** Which Tail text-input habits this net may draw from — a per-net
      *  subset of the habits Tail itself is willing to share. */
     val tailTextHabits: List<String> = emptyList(),
+    /** Per-source question distribution (percent) — see [SourceMix]. Empty
+     *  map means "not configured yet": [mix] then derives legacy defaults
+     *  from the accent booleans (each enabled accent gets a small sprinkle
+     *  share, the rest is core). */
+    val sourceWeights: Map<String, Int> = emptyMap(),
     val createdAt: Long = System.currentTimeMillis()
 ) {
     val isAll: Boolean get() = id == ALL_ID
+
+    /** The normalized per-source distribution actually used by generation. */
+    fun mix(): Map<String, Int> =
+        if (sourceWeights.isEmpty())
+            SourceMix.legacy(locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(), tailTextEnabled)
+        else SourceMix.normalize(sourceWeights)
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -62,6 +70,7 @@ data class Net(
         put("srcNets", JSONArray(sourceNetIds))
         put("tailText", tailTextEnabled)
         put("tailHabits", JSONArray(tailTextHabits))
+        put("mix", JSONObject(mix()))
         put("ts", createdAt)
     }
 
@@ -71,19 +80,93 @@ data class Net(
         /** The immutable, undeletable default net spanning all knowledge. */
         val ALL = Net(id = ALL_ID, name = "All", description = "", podcastEnabled = true, createdAt = 0L)
 
-        fun fromJson(o: JSONObject): Net = Net(
-            id = o.optString("id", ALL_ID).ifBlank { ALL_ID },
-            name = o.optString("name").trim().ifEmpty { "Net" },
-            description = o.optString("description"),
-            podcastEnabled = o.optBoolean("podcast", true),
-            locationEnabled = o.optBoolean("loc", false),
-            dateEnabled = o.optBoolean("date", false),
-            sourceNetIds = o.optJSONArray("srcNets").toStringList().filter { it.isNotBlank() },
-            tailTextEnabled = o.optBoolean("tailText", false),
-            tailTextHabits = o.optJSONArray("tailHabits").toStringList().filter { it.isNotBlank() }.distinct(),
-            createdAt = o.optLong("ts", 0L)
-        )
+        fun fromJson(o: JSONObject): Net {
+            val locationEnabled = o.optBoolean("loc", false)
+            val dateEnabled = o.optBoolean("date", false)
+            val sourceNetIds = o.optJSONArray("srcNets").toStringList().filter { it.isNotBlank() }
+            val tailTextEnabled = o.optBoolean("tailText", false)
+            // Mix migration: nets saved before source mixes existed keep
+            // working — their accent toggles become small legacy shares.
+            val mixObj = o.optJSONObject("mix")
+            val weights = if (mixObj != null) {
+                val raw = HashMap<String, Int>()
+                for (k in mixObj.keys()) raw[k] = mixObj.optInt(k, 0)
+                SourceMix.normalize(raw)
+            } else null
+            return Net(
+                id = o.optString("id", ALL_ID).ifBlank { ALL_ID },
+                name = o.optString("name").trim().ifEmpty { "Net" },
+                description = o.optString("description"),
+                podcastEnabled = o.optBoolean("podcast", true),
+                locationEnabled = locationEnabled,
+                dateEnabled = dateEnabled,
+                sourceNetIds = sourceNetIds,
+                tailTextEnabled = tailTextEnabled,
+                tailTextHabits = o.optJSONArray("tailHabits").toStringList().filter { it.isNotBlank() }.distinct(),
+                sourceWeights = weights
+                    ?: SourceMix.legacy(locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(), tailTextEnabled),
+                createdAt = o.optLong("ts", 0L)
+            )
+        }
     }
+}
+
+/**
+ * Per-net distribution of question SOURCES, in percent of each generated
+ * batch. The user chooses how much of a net's questions come from each
+ * flavor; [Net.mix] always returns a normalized map (core + the four
+ * accents, summing to 100).
+ */
+object SourceMix {
+    /** Adaptive core: the net's own scope, driven by user state/frontiers. */
+    const val CORE = "core"
+    /** Questions tied to the phone's current region. */
+    const val LOCATION = "location"
+    /** Questions tied to today (this date in history, anniversaries…). */
+    const val DATE = "date"
+    /** Questions anchored in knowledge from other nets. */
+    const val CROSS_NET = "crossNet"
+    /** Questions inspired by the user's Tail life-log entries. */
+    const val TAIL_TEXT = "tailText"
+
+    val ACCENTS = listOf(LOCATION, DATE, CROSS_NET, TAIL_TEXT)
+
+    /** Accents combined can never fully take over a net — core keeps a floor. */
+    const val MAX_TOTAL_ACCENTS = 80
+
+    /** Share an accent got when it was a plain on/off toggle (legacy migration). */
+    const val LEGACY_ACCENT_PERCENT = 8
+
+    /** Clamps, scales and completes a raw weight map into a full
+     *  core + accents distribution summing to 100. Pure — unit tested. */
+    fun normalize(raw: Map<String, Int>): Map<String, Int> {
+        var accents = ACCENTS.associateWith { k -> (raw[k] ?: 0).coerceIn(0, 100) }
+        val total = accents.values.sum()
+        if (total > MAX_TOTAL_ACCENTS) {
+            val scale = MAX_TOTAL_ACCENTS.toDouble() / total
+            accents = accents.mapValues { (_, v) -> Math.round(v * scale).toInt() }
+        }
+        val out = HashMap<String, Int>()
+        for (k in ACCENTS) out[k] = accents[k] ?: 0
+        out[CORE] = 100 - accents.values.sum()
+        return out
+    }
+
+    /** Pre-mix defaults: every toggled-on accent gets a small sprinkle
+     *  share; the rest is core. Pure — unit tested. */
+    fun legacy(
+        location: Boolean,
+        date: Boolean,
+        crossNet: Boolean,
+        tailText: Boolean
+    ): Map<String, Int> = normalize(
+        buildMap {
+            if (location) put(LOCATION, LEGACY_ACCENT_PERCENT)
+            if (date) put(DATE, LEGACY_ACCENT_PERCENT)
+            if (crossNet) put(CROSS_NET, LEGACY_ACCENT_PERCENT)
+            if (tailText) put(TAIL_TEXT, LEGACY_ACCENT_PERCENT)
+        }
+    )
 }
 
 /**
@@ -209,7 +292,8 @@ class NetStore(
                         dateEnabled = net.dateEnabled,
                         sourceNetIds = sources,
                         tailTextEnabled = net.tailTextEnabled,
-                        tailTextHabits = net.tailTextHabits.distinct()
+                        tailTextHabits = net.tailTextHabits.distinct(),
+                        sourceWeights = net.mix()
                     ) else it
                 }
             } else {
@@ -218,7 +302,8 @@ class NetStore(
                         net.copy(
                             name = net.name.trim().ifEmpty { it.name },
                             sourceNetIds = sources,
-                            tailTextHabits = net.tailTextHabits.distinct()
+                            tailTextHabits = net.tailTextHabits.distinct(),
+                            sourceWeights = net.mix()
                         )
                     } else it
                 }

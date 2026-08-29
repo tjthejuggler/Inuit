@@ -26,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.inuit.data.Net
+import com.example.inuit.data.SourceMix
 
 /**
  * Settings → Nets: the net registry. Each net is a fully separate question
@@ -230,9 +232,13 @@ private fun NetEditDialog(
     var name by rememberSaveable { mutableStateOf(initial?.name ?: "") }
     var description by rememberSaveable { mutableStateOf(initial?.description ?: "") }
     var podcastEnabled by rememberSaveable { mutableStateOf(initial?.podcastEnabled ?: true) }
-    var locationEnabled by rememberSaveable { mutableStateOf(initial?.locationEnabled ?: false) }
-    var dateEnabled by rememberSaveable { mutableStateOf(initial?.dateEnabled ?: false) }
-    var tailTextEnabled by rememberSaveable { mutableStateOf(initial?.tailTextEnabled ?: false) }
+    // Source mix, in percent per accent (core = the remainder). Sliders snap
+    // to steps of 5; combined accents are clamped to MAX_TOTAL_ACCENTS.
+    val initialMix = initial?.mix() ?: SourceMix.legacy(false, false, false, false)
+    var wLocation by rememberSaveable { mutableStateOf(initialMix[SourceMix.LOCATION] ?: 0) }
+    var wDate by rememberSaveable { mutableStateOf(initialMix[SourceMix.DATE] ?: 0) }
+    var wCrossNet by rememberSaveable { mutableStateOf(initialMix[SourceMix.CROSS_NET] ?: 0) }
+    var wTailText by rememberSaveable { mutableStateOf(initialMix[SourceMix.TAIL_TEXT] ?: 0) }
     // Habit names can contain commas — join with newlines (names are single-line).
     var tailHabitsCsv by rememberSaveable {
         mutableStateOf(initial?.tailTextHabits?.joinToString("\n") ?: "")
@@ -248,7 +254,13 @@ private fun NetEditDialog(
     // Optimistically flip the toggle on; the callback reverts it if denied.
     val locationPermission = rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted: Boolean -> if (!granted) locationEnabled = false }
+    ) { granted: Boolean -> if (!granted) wLocation = 0 }
+
+    /** Snap to 5% steps and clamp so combined accents keep core its floor. */
+    fun snapAccent(raw: Float, others: Int): Int {
+        val desired = (raw / 5f).toInt() * 5
+        return desired.coerceIn(0, SourceMix.MAX_TOTAL_ACCENTS - others)
+    }
 
     fun toggleSource(id: String) {
         val current = selectedSources.toMutableList()
@@ -322,13 +334,14 @@ private fun NetEditDialog(
                 }
 
                 Text(
-                    "Occasional accents",
+                    "Question source mix",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    "Light seasoning only — at most a question or two per batch; " +
-                        "the net's own scope always dominates.",
+                    "How each batch's questions are distributed. Core is the net's " +
+                        "own adaptive material; the rest draw on the sources below. " +
+                        "Accents combined can take at most ${SourceMix.MAX_TOTAL_ACCENTS}%.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -340,32 +353,58 @@ private fun NetEditDialog(
                         .padding(vertical = 2.dp)
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Location accents", style = MaterialTheme.typography.bodyMedium)
+                        Text("Core (this net)", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "Occasionally ask about your current region " +
+                            "${(100 - wLocation - wDate - wCrossNet - wTailText).coerceAtLeast(0)}% — adaptive questions from the net's own scope",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .padding(vertical = 2.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Location", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Questions tied to your current region " +
                                 "(needs location permission)",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
-                        checked = locationEnabled,
-                        onCheckedChange = { want ->
-                            if (!want) {
-                                locationEnabled = false
-                            } else if (ContextCompat.checkSelfPermission(
-                                    context, Manifest.permission.ACCESS_COARSE_LOCATION
-                                ) == PackageManager.PERMISSION_GRANTED ||
-                                ContextCompat.checkSelfPermission(
-                                    context, Manifest.permission.ACCESS_FINE_LOCATION
-                                ) == PackageManager.PERMISSION_GRANTED
-                            ) {
-                                locationEnabled = true
+                    Text("$wLocation%", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = wLocation.toFloat(),
+                        onValueChange = { raw ->
+                            val snapped = snapAccent(raw, wDate + wCrossNet + wTailText)
+                            if (snapped > 0 && wLocation == 0) {
+                                // flipping on — make sure the permission is there
+                                if (ContextCompat.checkSelfPermission(
+                                        context, Manifest.permission.ACCESS_COARSE_LOCATION
+                                    ) == PackageManager.PERMISSION_GRANTED ||
+                                    ContextCompat.checkSelfPermission(
+                                        context, Manifest.permission.ACCESS_FINE_LOCATION
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    wLocation = snapped
+                                } else {
+                                    wLocation = snapped // optimistic; reverted if denied
+                                    locationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                                }
                             } else {
-                                locationEnabled = true // optimistic; reverted if denied
-                                locationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                                wLocation = snapped
                             }
-                        }
+                        },
+                        valueRange = 0f..100f,
+                        steps = 19,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp)
                     )
                 }
                 Row(
@@ -376,15 +415,26 @@ private fun NetEditDialog(
                         .padding(vertical = 2.dp)
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Date accents", style = MaterialTheme.typography.bodyMedium)
+                        Text("Date", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "Occasionally tie questions to today — this date in " +
-                                "history, this year in past centuries",
+                            "Questions tied to today — this date in history, " +
+                                "this year in past centuries",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(checked = dateEnabled, onCheckedChange = { dateEnabled = it })
+                    Text("$wDate%", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = wDate.toFloat(),
+                        onValueChange = { raw ->
+                            wDate = snapAccent(raw, wLocation + wCrossNet + wTailText)
+                        },
+                        valueRange = 0f..100f,
+                        steps = 19,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp)
+                    )
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -394,17 +444,57 @@ private fun NetEditDialog(
                         .padding(vertical = 2.dp)
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Tail life-log accents", style = MaterialTheme.typography.bodyMedium)
+                        Text("Other nets", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "Occasionally draw inspiration from your recent " +
-                                "Tail notes (most recent entries only)",
+                            "Questions anchored in what you know from the source " +
+                                "nets picked below — still inside this net's scope",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(checked = tailTextEnabled, onCheckedChange = { tailTextEnabled = it })
+                    Text("$wCrossNet%", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = wCrossNet.toFloat(),
+                        onValueChange = { raw ->
+                            wCrossNet = snapAccent(raw, wLocation + wDate + wTailText)
+                        },
+                        valueRange = 0f..100f,
+                        steps = 19,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp)
+                    )
                 }
-                if (tailTextEnabled) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .padding(vertical = 2.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Tail life-log", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Questions inspired by your recent Tail notes " +
+                                "(most recent entries only)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text("$wTailText%", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = wTailText.toFloat(),
+                        onValueChange = { raw ->
+                            wTailText = snapAccent(raw, wLocation + wDate + wCrossNet)
+                        },
+                        valueRange = 0f..100f,
+                        steps = 19,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp)
+                    )
+                }
+                if (wTailText > 0) {
                     if (sharedTailHabits.isEmpty()) {
                         Text(
                             "Nothing shared yet — pick text-input habits in Tail: " +
@@ -490,11 +580,19 @@ private fun NetEditDialog(
                         name = if (isAll) initial!!.name else name.trim(),
                         description = if (isAll) initial!!.description else description.trim(),
                         podcastEnabled = podcastEnabled,
-                        locationEnabled = locationEnabled,
-                        dateEnabled = dateEnabled,
-                        tailTextEnabled = tailTextEnabled,
+                        locationEnabled = wLocation > 0,
+                        dateEnabled = wDate > 0,
+                        tailTextEnabled = wTailText > 0,
                         tailTextHabits = selectedTailHabits,
-                        sourceNetIds = selectedSources
+                        sourceNetIds = selectedSources,
+                        sourceWeights = SourceMix.normalize(
+                            mapOf(
+                                SourceMix.LOCATION to wLocation,
+                                SourceMix.DATE to wDate,
+                                SourceMix.CROSS_NET to wCrossNet,
+                                SourceMix.TAIL_TEXT to wTailText
+                            )
+                        )
                     )
                     onSave(draft)
                 },

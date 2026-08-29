@@ -104,4 +104,42 @@ class NetStoreTest {
         assertEquals("inuit_store.json", com.example.inuit.data.QuestionStore.fileNameFor(Net.ALL_ID))
         assertEquals("inuit_store_j1.json", com.example.inuit.data.QuestionStore.fileNameFor("j1"))
     }
+
+    @Test
+    fun `source mix round-trips through json`() {
+        val net = Net(
+            id = "m1", name = "Milan",
+            locationEnabled = true, tailTextEnabled = true,
+            sourceWeights = mapOf(
+                com.example.inuit.data.SourceMix.LOCATION to 40,
+                com.example.inuit.data.SourceMix.TAIL_TEXT to 20
+            )
+        )
+        val copy = Net.fromJson(net.toJson())
+        assertEquals(40, copy.mix()[com.example.inuit.data.SourceMix.LOCATION])
+        assertEquals(20, copy.mix()[com.example.inuit.data.SourceMix.TAIL_TEXT])
+        assertEquals(40, copy.mix()[com.example.inuit.data.SourceMix.CORE])
+        assertEquals(100, copy.mix().values.sum())
+        // booleans stay in sync with the weights
+        assertTrue(copy.locationEnabled)
+        assertFalse(copy.dateEnabled)
+    }
+
+    @Test
+    fun `legacy net without mix derives sprinkle defaults from toggles`() {
+        val legacy = """{"id":"old","name":"Ancient","loc":true,"date":true,"ts":1}"""
+        val net = Net.fromJson(org.json.JSONObject(legacy))
+        val mix = net.mix()
+        assertEquals(com.example.inuit.data.SourceMix.LEGACY_ACCENT_PERCENT, mix[com.example.inuit.data.SourceMix.LOCATION])
+        assertEquals(com.example.inuit.data.SourceMix.LEGACY_ACCENT_PERCENT, mix[com.example.inuit.data.SourceMix.DATE])
+        assertEquals(0, mix[com.example.inuit.data.SourceMix.TAIL_TEXT])
+        assertEquals(100 - 2 * com.example.inuit.data.SourceMix.LEGACY_ACCENT_PERCENT, mix[com.example.inuit.data.SourceMix.CORE])
+    }
+
+    @Test
+    fun `unconfigured net mix derives from booleans`() {
+        val net = Net(name = "X", tailTextEnabled = true, tailTextHabits = listOf("Dreams"))
+        assertEquals(com.example.inuit.data.SourceMix.LEGACY_ACCENT_PERCENT, net.mix()[com.example.inuit.data.SourceMix.TAIL_TEXT])
+        assertEquals(100 - com.example.inuit.data.SourceMix.LEGACY_ACCENT_PERCENT, net.mix()[com.example.inuit.data.SourceMix.CORE])
+    }
 }

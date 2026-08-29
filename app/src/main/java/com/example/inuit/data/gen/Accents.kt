@@ -13,6 +13,7 @@ import com.example.inuit.data.DomainStat
 import com.example.inuit.data.KnowledgeSummary
 import com.example.inuit.data.Net
 import com.example.inuit.data.NetStore
+import com.example.inuit.data.SourceMix
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionStore
 import com.example.inuit.data.TailIntegration
@@ -31,8 +32,8 @@ import java.util.Locale
  *    picked as sources.
  *
  * Everything here produces at most a few context lines; [Prompts] wraps
- * them in a strict dosage block ("seasoning, not the meal") so the net's
- * own material always dominates the batch.
+ * them in the QUESTION SOURCE MIX block with per-source question targets
+ * derived from the net's configured source distribution ([Net.mix]).
  */
 
 /** The assembled accent context for one generation batch. */
@@ -50,9 +51,6 @@ data class NetAccents(
         get() = locationLine == null && dateLines.isEmpty() &&
             crossNetLines.isEmpty() && tailTextLines.isEmpty()
 }
-
-/** Hard ceiling on accent questions per batch — a sprinkle, never a takeover. */
-fun accentQuestionCap(batchSize: Int): Int = (batchSize / 6).coerceIn(1, 3)
 
 // ── Date accent (pure — unit tested) ──────────────────────────────────────
 
@@ -329,13 +327,18 @@ class AccentsBuilder(
 ) {
 
     suspend fun build(net: Net): NetAccents {
+        // Dosage gates come from the net's configured source mix; a source
+        // with zero weight is never even fetched.
+        val mix = net.mix()
         // Location doubles as the hemisphere hint for the date accent.
-        val place = if (net.locationEnabled) locationProvider.currentPlace() else null
+        val place = if (mix.getValue(SourceMix.LOCATION) > 0) locationProvider.currentPlace() else null
         val locationLine = place?.let { "the user is currently near ${it.description}" }
-        val dateLines = if (net.dateEnabled) DateAccents.lines(LocalDate.now(), place?.latitude) else emptyList()
-        val crossNetLines = if (net.sourceNetIds.isEmpty()) emptyList() else crossNetLines(net)
+        val dateLines =
+            if (mix.getValue(SourceMix.DATE) > 0) DateAccents.lines(LocalDate.now(), place?.latitude) else emptyList()
+        val crossNetLines =
+            if (mix.getValue(SourceMix.CROSS_NET) > 0 && net.sourceNetIds.isNotEmpty()) crossNetLines(net) else emptyList()
         val tailTextLines =
-            if (net.tailTextEnabled && net.tailTextHabits.isNotEmpty()) tailTextLines(net) else emptyList()
+            if (mix.getValue(SourceMix.TAIL_TEXT) > 0 && net.tailTextHabits.isNotEmpty()) tailTextLines(net) else emptyList()
         return NetAccents(locationLine, dateLines, crossNetLines, tailTextLines)
     }
 

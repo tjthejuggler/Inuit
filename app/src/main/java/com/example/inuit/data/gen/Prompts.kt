@@ -3,6 +3,7 @@ package com.example.inuit.data.gen
 import com.example.inuit.data.AppSettings
 import com.example.inuit.data.KnowledgeSummary
 import com.example.inuit.data.Net
+import com.example.inuit.data.SourceMix
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -148,32 +149,54 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
             ctx.revisitFrontiers.forEach { sb.append("- ").append(it).append('\n') }
         }
 
-        val cap = if (accents == null || accents.isEmpty) 0 else accentQuestionCap(batchSize)
-        if (cap > 0) {
-            sb.append("\n== OCCASIONAL ACCENTS (seasoning, not the meal — STRICT DOSAGE) ==\n")
-            sb.append("Optional flavors for this batch. The net's own scope and the task below ALWAYS dominate. ")
-                .append("Use at most ONE question per accent below and NEVER more than $cap accent question(s) total. ")
-                .append("If an accent does not fit the net's scope naturally, skip it entirely — a forced accent is worse than none.\n")
-            accents!!.locationLine?.let {
-                sb.append("- LOCATION: $it — a question tied to that region (its history, geography, science, notable people/events) ")
-                    .append("that still fits this net's scope; if no honest connection exists, skip.\n")
+        // Per-source question targets from the net's configured mix. An
+        // accent only gets a target when its data is actually available
+        // this batch; unavailable accents' share quietly folds back into core.
+        val mix = net?.mix()
+        fun target(key: String): Int {
+            val w = mix?.get(key) ?: 0
+            if (w <= 0) return 0
+            return Math.round(batchSize * w / 100.0).toInt().coerceAtLeast(1)
+        }
+        val locTarget = if (accents?.locationLine != null) target(SourceMix.LOCATION) else 0
+        val dateTarget = if (accents?.dateLines?.isNotEmpty() == true) target(SourceMix.DATE) else 0
+        val crossTarget = if (accents?.crossNetLines?.isNotEmpty() == true) target(SourceMix.CROSS_NET) else 0
+        val tailTarget = if (accents?.tailTextLines?.isNotEmpty() == true) target(SourceMix.TAIL_TEXT) else 0
+        val accentTotal = locTarget + dateTarget + crossTarget + tailTarget
+        if (accentTotal > 0) {
+            val a = accents!!
+            sb.append("\n== QUESTION SOURCE MIX (the user's configured distribution for this net) ==\n")
+            sb.append("Of the $batchSize questions, aim for approximately: ")
+            val aims = ArrayList<String>(4)
+            if (locTarget > 0) aims.add("$locTarget tied to the LOCATION below")
+            if (dateTarget > 0) aims.add("$dateTarget tied to today's DATE")
+            if (crossTarget > 0) aims.add("$crossTarget anchored in the OTHER NETS below")
+            if (tailTarget > 0) aims.add("$tailTarget inspired by the LIFE-LOG below")
+            sb.append(aims.joinToString(", ")).append("; the remaining ").append(batchSize - accentTotal)
+                .append(" are core questions driven by the rest of this context. ")
+                .append("Treat the counts as targets, not straitjackets: if a source genuinely ")
+                .append("cannot supply an honest, certain question that fits this net's scope, ")
+                .append("drop it rather than force it.\n")
+            if (locTarget > 0) {
+                sb.append("- LOCATION (${locTarget} question(s)): ${a.locationLine} — questions tied to that region ")
+                    .append("(its history, geography, science, notable people/events) that still fit this net's scope.\n")
             }
-            if (accents.dateLines.isNotEmpty()) {
-                sb.append("- DATE: ").append(accents.dateLines.joinToString(" · ")).append('\n')
-                sb.append("  → a question whose answer is anchored to today's date, this date in history, or one of those past years.\n")
+            if (dateTarget > 0) {
+                sb.append("- DATE (${dateTarget} question(s)): ").append(a.dateLines.joinToString(" · ")).append('\n')
+                sb.append("  → questions whose answers are anchored to today's date, this date in history, or one of those past years.\n")
             }
-            if (accents.crossNetLines.isNotEmpty()) {
-                sb.append("- OTHER NETS (the user also trains in these; their knowledge there can anchor a bridge question):\n")
-                accents.crossNetLines.forEach { sb.append(it).append('\n') }
-                sb.append("  → anchor at most one question in something they know/missed there — but the question itself must stay STRICTLY inside this net's scope (a bridge, not a departure).\n")
+            if (crossTarget > 0) {
+                sb.append("- OTHER NETS (${crossTarget} question(s); the user also trains in these):\n")
+                a.crossNetLines.forEach { sb.append(it).append('\n') }
+                sb.append("  → anchor questions in something they know/missed there — but each question itself must stay STRICTLY inside this net's scope (a bridge, not a departure).\n")
             }
-            if (accents.tailTextLines.isNotEmpty()) {
-                sb.append("- LIFE-LOG (the user's own recent notes from their habit tracker):\n")
-                accents.tailTextLines.forEach { sb.append("  ").append(it).append('\n') }
-                sb.append("  → these are personal seeds, NOT quiz material: at most one question may draw ")
-                    .append("light inspiration from them (a topic, entity or theme a note mentions), ")
-                    .append("and it must still fit this net's scope with a verifiable answer. ")
-                    .append("Never quote the notes back and never ask about the user personally.\n")
+            if (tailTarget > 0) {
+                sb.append("- LIFE-LOG (${tailTarget} question(s); the user's own recent notes from their habit tracker):\n")
+                a.tailTextLines.forEach { sb.append("  ").append(it).append('\n') }
+                sb.append("  → these are personal seeds, NOT quiz material: questions may draw ")
+                .append("light inspiration from them (a topic, entity or theme a note mentions), ")
+                .append("and must still fit this net's scope with a verifiable answer. ")
+                .append("Never quote the notes back and never ask about the user personally.\n")
             }
         }
 
@@ -194,8 +217,8 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         }
         sb.append("Use all four types (at least 2 questions per type). ")
         sb.append("Include at least 2 obscure-but-certain questions (statistics, magnitudes, records). ")
-        if (cap > 0) {
-            sb.append("You MAY draw up to $cap question(s) from the OCCASIONAL ACCENTS section — never more. ")
+        if (accentTotal > 0) {
+            sb.append("Aim for the QUESTION SOURCE MIX targets ($accentTotal accent question(s) total). ")
         }
         if (ctx.noviceDomains.isNotEmpty()) {
             sb.append("For every NOVICE DOMAIN (and any domain where a recent wrong answer was off-category), ")
