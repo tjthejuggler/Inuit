@@ -27,6 +27,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -110,6 +111,12 @@ fun QuestionCard(
             Spacer(Modifier.height(18.dp))
 
             // ── answer input per type ─────────────────────────────────────
+            // Keyed by question id: without this, when consecutive questions
+            // share a type Compose reuses the same button nodes and the ripple
+            // fade-out from the previous answer bleeds onto the new question's
+            // buttons, looking like an accidental double press. A fresh key
+            // forces fresh button instances with clean interaction state.
+            key(question.id) {
             when (question.type) {
                 QuestionType.TRUE_FALSE -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -183,6 +190,7 @@ fun QuestionCard(
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.End) {
                 OutlinedButton(onClick = onSkip, shape = RoundedCornerShape(14.dp)) { Text("Skip") }
+            }
             }
         }
     }
