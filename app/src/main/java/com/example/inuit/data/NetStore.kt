@@ -48,15 +48,19 @@ data class Net(
     /** Per-source question distribution (percent) — see [SourceMix]. Empty
      *  map means "not configured yet": [mix] then derives legacy defaults
      *  from the accent booleans (each enabled accent gets a small sprinkle
-     *  share, the rest is core). */
+     *  share, the rest is core). Custom sources use keys
+     *  [SourceMix.customKey] of their [CustomSource.id]. */
     val sourceWeights: Map<String, Int> = emptyMap(),
+    /** User-defined question sources: a short label plus free-text guidance
+     *  fed to the generator. Each gets its own slider/weight in the mix. */
+    val customSources: List<CustomSource> = emptyList(),
     val createdAt: Long = System.currentTimeMillis()
 ) {
     val isAll: Boolean get() = id == ALL_ID
 
     /** The normalized per-source distribution actually used by generation. */
     fun mix(): Map<String, Int> =
-        if (sourceWeights.isEmpty())
+        if (sourceWeights.isEmpty() && customSources.isEmpty())
             SourceMix.legacy(locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(), tailTextEnabled)
         else SourceMix.normalize(sourceWeights)
 
@@ -71,6 +75,7 @@ data class Net(
         put("tailText", tailTextEnabled)
         put("tailHabits", JSONArray(tailTextHabits))
         put("mix", JSONObject(mix()))
+        put("customSrcs", JSONArray(customSources.map { it.toJson() }))
         put("ts", createdAt)
     }
 
@@ -93,6 +98,9 @@ data class Net(
                 for (k in mixObj.keys()) raw[k] = mixObj.optInt(k, 0)
                 SourceMix.normalize(raw)
             } else null
+            val customs = o.optJSONArray("customSrcs").toStringList().mapNotNull {
+                try { CustomSource.fromJson(org.json.JSONObject(it)) } catch (_: Exception) { null }
+            }
             return Net(
                 id = o.optString("id", ALL_ID).ifBlank { ALL_ID },
                 name = o.optString("name").trim().ifEmpty { "Net" },
@@ -105,9 +113,33 @@ data class Net(
                 tailTextHabits = o.optJSONArray("tailHabits").toStringList().filter { it.isNotBlank() }.distinct(),
                 sourceWeights = weights
                     ?: SourceMix.legacy(locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(), tailTextEnabled),
+                customSources = customs,
                 createdAt = o.optLong("ts", 0L)
             )
         }
+    }
+}
+
+/** One user-defined question source: a label plus free-text guidance the
+ *  generator follows for its share of each batch. */
+data class CustomSource(
+    /** Stable id; weight key is [SourceMix.customKey] of it. */
+    val id: String = UUID.randomUUID().toString(),
+    /** Short name shown on the slider (single line). */
+    val label: String,
+    /** Free-text guidance fed to the LLM for this source's questions. */
+    val guidance: String = ""
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id); put("label", label); put("text", guidance)
+    }
+
+    companion object {
+        fun fromJson(o: JSONObject): CustomSource = CustomSource(
+            id = o.optString("id").ifBlank { UUID.randomUUID().toString() },
+            label = o.optString("label").trim(),
+            guidance = o.optString("text").trim()
+        )
     }
 }
 
@@ -137,17 +169,25 @@ object SourceMix {
     /** Share an accent got when it was a plain on/off toggle (legacy migration). */
     const val LEGACY_ACCENT_PERCENT = 8
 
+    /** Weight-map key of a custom source's id. */
+    fun customKey(id: String): String = "custom:$id"
+
     /** Clamps, scales and completes a raw weight map into a full
-     *  core + accents distribution summing to 100. Pure — unit tested. */
+     *  core + accents distribution summing to 100. Any key other than
+     *  [CORE] (built-in accents and `custom:<id>` alike) is an accent. */
     fun normalize(raw: Map<String, Int>): Map<String, Int> {
-        var accents = ACCENTS.associateWith { k -> (raw[k] ?: 0).coerceIn(0, 100) }
+        var accents = raw.filterKeys { it != CORE }
+            .mapValues { (_, v) -> v.coerceIn(0, 100) }
         val total = accents.values.sum()
         if (total > MAX_TOTAL_ACCENTS) {
             val scale = MAX_TOTAL_ACCENTS.toDouble() / total
             accents = accents.mapValues { (_, v) -> Math.round(v * scale).toInt() }
         }
         val out = HashMap<String, Int>()
+        // Built-in accent keys are always present (zeroed when unused) so
+        // callers can use getValue(); custom keys appear only when set.
         for (k in ACCENTS) out[k] = accents[k] ?: 0
+        accents.forEach { (k, v) -> if (k !in ACCENTS) out[k] = v }
         out[CORE] = 100 - accents.values.sum()
         return out
     }
@@ -293,7 +333,8 @@ class NetStore(
                         sourceNetIds = sources,
                         tailTextEnabled = net.tailTextEnabled,
                         tailTextHabits = net.tailTextHabits.distinct(),
-                        sourceWeights = net.mix()
+                        sourceWeights = net.mix(),
+                        customSources = net.customSources
                     ) else it
                 }
             } else {
@@ -303,7 +344,8 @@ class NetStore(
                             name = net.name.trim().ifEmpty { it.name },
                             sourceNetIds = sources,
                             tailTextHabits = net.tailTextHabits.distinct(),
-                            sourceWeights = net.mix()
+                            sourceWeights = net.mix(),
+                            customSources = net.customSources
                         )
                     } else it
                 }

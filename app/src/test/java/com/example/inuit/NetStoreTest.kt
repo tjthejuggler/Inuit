@@ -126,6 +126,29 @@ class NetStoreTest {
     }
 
     @Test
+    fun `custom sources round-trip with their weights through json`() {
+        val cs = com.example.inuit.data.CustomSource(
+            id = "c1", label = "Numbers & magnitudes",
+            guidance = "Order-of-magnitude estimates in physics and everyday life"
+        )
+        val net = Net(
+            id = "c9", name = "Curious",
+            customSources = listOf(cs),
+            sourceWeights = mapOf(
+                com.example.inuit.data.SourceMix.customKey("c1") to 25,
+                com.example.inuit.data.SourceMix.DATE to 15
+            )
+        )
+        val copy = Net.fromJson(net.toJson())
+        assertEquals(1, copy.customSources.size)
+        assertEquals("Numbers & magnitudes", copy.customSources[0].label)
+        assertEquals("Order-of-magnitude estimates in physics and everyday life", copy.customSources[0].guidance)
+        assertEquals(25, copy.mix()[com.example.inuit.data.SourceMix.customKey("c1")])
+        assertEquals(15, copy.mix()[com.example.inuit.data.SourceMix.DATE])
+        assertEquals(60, copy.mix()[com.example.inuit.data.SourceMix.CORE])
+    }
+
+    @Test
     fun `legacy net without mix derives sprinkle defaults from toggles`() {
         val legacy = """{"id":"old","name":"Ancient","loc":true,"date":true,"ts":1}"""
         val net = Net.fromJson(org.json.JSONObject(legacy))

@@ -97,6 +97,25 @@ class PromptsTest {
     }
 
     @Test
+    fun `custom sources render their guidance and target count`() {
+        val cs = com.example.inuit.data.CustomSource(
+            id = "c1", label = "Numbers & magnitudes",
+            guidance = "Order-of-magnitude estimates in physics and everyday life"
+        )
+        val net = Net(
+            name = "Curious", description = "Everything",
+            customSources = listOf(cs),
+            sourceWeights = mapOf(com.example.inuit.data.SourceMix.customKey("c1") to 25)
+        )
+        val out = Prompts.userRequest(context(challenge = emptyList()), batchSize = 12, net = net)
+        assertTrue(out.contains("QUESTION SOURCE MIX"))
+        // 25% of 12 = 3
+        assertTrue(out.contains("3 from Numbers & magnitudes"))
+        assertTrue(out.contains("Numbers & magnitudes (3 question(s)"))
+        assertTrue(out.contains("Order-of-magnitude estimates in physics and everyday life"))
+    }
+
+    @Test
     fun `accent without data this batch folds its share into core`() {
         val net = Net(
             name = "Milan", description = "All things Milan",

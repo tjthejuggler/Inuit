@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.inuit.data.CustomSource
 import com.example.inuit.data.Net
 import com.example.inuit.data.SourceMix
 
@@ -239,6 +240,20 @@ private fun NetEditDialog(
     var wDate by rememberSaveable { mutableStateOf(initialMix[SourceMix.DATE] ?: 0) }
     var wCrossNet by rememberSaveable { mutableStateOf(initialMix[SourceMix.CROSS_NET] ?: 0) }
     var wTailText by rememberSaveable { mutableStateOf(initialMix[SourceMix.TAIL_TEXT] ?: 0) }
+    // Custom sources: label + guidance + own weight. Plain remember (not
+    // saveable) — CustomSource isn't Bundle-saveable; losing an in-progress
+    // dialog on process death is acceptable.
+    var customs by remember { mutableStateOf(initial?.customSources ?: emptyList()) }
+    var customWeights by remember {
+        val ws = HashMap<String, Int>()
+        initial?.mix()?.forEach { (k, v) ->
+            k.removePrefix("custom:")?.let { id -> if (id != k) ws[id] = v }
+        }
+        mutableStateOf(ws)
+    }
+    var editingCustom by remember { mutableStateOf<CustomSource?>(null) }
+    var addingCustom by remember { mutableStateOf(false) }
+    var confirmingDeleteCustom by remember { mutableStateOf<CustomSource?>(null) }
     // Habit names can contain commas — join with newlines (names are single-line).
     var tailHabitsCsv by rememberSaveable {
         mutableStateOf(initial?.tailTextHabits?.joinToString("\n") ?: "")
@@ -261,6 +276,11 @@ private fun NetEditDialog(
         val desired = (raw / 5f).toInt() * 5
         return desired.coerceIn(0, SourceMix.MAX_TOTAL_ACCENTS - others)
     }
+
+    /** Sum of all accent weights except the given custom source. */
+    fun othersSum(excludeCustomId: String? = null): Int =
+        wLocation + wDate + wCrossNet + wTailText +
+            customs.filter { it.id != excludeCustomId }.sumOf { customWeights[it.id] ?: 0 }
 
     fun toggleSource(id: String) {
         val current = selectedSources.toMutableList()
@@ -355,7 +375,7 @@ private fun NetEditDialog(
                     Column(Modifier.weight(1f)) {
                         Text("Core (this net)", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "${(100 - wLocation - wDate - wCrossNet - wTailText).coerceAtLeast(0)}% — adaptive questions from the net's own scope",
+                            "${(100 - othersSum()).coerceAtLeast(0)}% — adaptive questions from the net's own scope",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -494,6 +514,71 @@ private fun NetEditDialog(
                             .padding(start = 8.dp)
                     )
                 }
+
+                // ── custom sources ─────────────────────────────────────────
+                customs.forEach { src ->
+                    val w = customWeights[src.id] ?: 0
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .padding(vertical = 2.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(src.label, style = MaterialTheme.typography.bodyMedium)
+                                if (src.guidance.isNotBlank()) {
+                                    Text(
+                                        src.guidance,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            Text("$w%", style = MaterialTheme.typography.labelMedium)
+                            IconButton(
+                                onClick = { editingCustom = src },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Edit, contentDescription = "Edit custom source",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { confirmingDeleteCustom = src },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete, contentDescription = "Delete custom source",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                        Slider(
+                            value = w.toFloat(),
+                            onValueChange = { raw ->
+                                customWeights = HashMap(customWeights).also {
+                                    it[src.id] = snapAccent(raw, othersSum(excludeCustomId = src.id))
+                                }
+                            },
+                            valueRange = 0f..100f,
+                            steps = 19
+                        )
+                    }
+                }
+                OutlinedButton(
+                    onClick = { addingCustom = true },
+                    enabled = customs.size < MAX_CUSTOM_SOURCES
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Add custom source")
+                }
                 if (wTailText > 0) {
                     if (sharedTailHabits.isEmpty()) {
                         Text(
@@ -586,17 +671,114 @@ private fun NetEditDialog(
                         tailTextHabits = selectedTailHabits,
                         sourceNetIds = selectedSources,
                         sourceWeights = SourceMix.normalize(
-                            mapOf(
-                                SourceMix.LOCATION to wLocation,
-                                SourceMix.DATE to wDate,
-                                SourceMix.CROSS_NET to wCrossNet,
-                                SourceMix.TAIL_TEXT to wTailText
-                            )
-                        )
+                            buildMap {
+                                put(SourceMix.LOCATION, wLocation)
+                                put(SourceMix.DATE, wDate)
+                                put(SourceMix.CROSS_NET, wCrossNet)
+                                put(SourceMix.TAIL_TEXT, wTailText)
+                                customs.forEach { put(SourceMix.customKey(it.id), customWeights[it.id] ?: 0) }
+                            }
+                        ),
+                        customSources = customs
                     )
                     onSave(draft)
                 },
                 enabled = isAll || name.isNotBlank()
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+
+    // ── custom-source add / edit / delete dialogs ─────────────────────────
+    if (addingCustom || editingCustom != null) {
+        CustomSourceDialog(
+            initial = editingCustom,
+            onDismiss = { addingCustom = false; editingCustom = null },
+            onSave = { src ->
+                if (addingCustom) {
+                    customs = customs + src
+                } else if (editingCustom != null) {
+                    customs = customs.map { if (it.id == src.id) src else it }
+                }
+                addingCustom = false
+                editingCustom = null
+            }
+        )
+    }
+    confirmingDeleteCustom?.let { src ->
+        AlertDialog(
+            onDismissRequest = { confirmingDeleteCustom = null },
+            title = { Text("Delete \"${src.label}\"?") },
+            text = { Text("Its slider and guidance are removed; its share returns to core.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    customs = customs.filter { it.id != src.id }
+                    customWeights = HashMap(customWeights).also { it.remove(src.id) }
+                    confirmingDeleteCustom = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingDeleteCustom = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+/** Max custom sources per net (bounded so the mix stays legible). */
+private const val MAX_CUSTOM_SOURCES = 6
+
+/** Add / edit dialog for a custom question source: label + guidance. */
+@Composable
+private fun CustomSourceDialog(
+    initial: CustomSource?,
+    onDismiss: () -> Unit,
+    onSave: (CustomSource) -> Unit
+) {
+    var label by rememberSaveable { mutableStateOf(initial?.label ?: "") }
+    var guidance by rememberSaveable { mutableStateOf(initial?.guidance ?: "") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "New custom source" else "Edit custom source") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("Name") },
+                    placeholder = { Text("e.g. Numbers & magnitudes") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = guidance,
+                    onValueChange = { guidance = it },
+                    label = { Text("Guidance") },
+                    placeholder = { Text("What questions from this source should focus on — e.g. \"order-of-magnitude estimates in physics and everyday life\"") },
+                    minLines = 3,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "The generator follows this guidance for this source's share of every batch; " +
+                        "questions still stay inside the net's scope.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onSave(
+                        (initial ?: CustomSource(label = "")).copy(
+                            label = label.trim(),
+                            guidance = guidance.trim()
+                        )
+                    )
+                },
+                enabled = label.isNotBlank()
             ) { Text("Save") }
         },
         dismissButton = {

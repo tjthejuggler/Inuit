@@ -162,9 +162,15 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         val dateTarget = if (accents?.dateLines?.isNotEmpty() == true) target(SourceMix.DATE) else 0
         val crossTarget = if (accents?.crossNetLines?.isNotEmpty() == true) target(SourceMix.CROSS_NET) else 0
         val tailTarget = if (accents?.tailTextLines?.isNotEmpty() == true) target(SourceMix.TAIL_TEXT) else 0
-        val accentTotal = locTarget + dateTarget + crossTarget + tailTarget
+        // Custom sources are always "available" — their guidance is static.
+        val customTargets = net?.customSources
+            ?.map { it to target(SourceMix.customKey(it.id)) }
+            ?.filter { it.second > 0 && it.first.label.isNotBlank() }
+            ?: emptyList()
+        val accentTotal = locTarget + dateTarget + crossTarget + tailTarget + customTargets.sumOf { it.second }
         if (accentTotal > 0) {
-            val a = accents!!
+            // Null accents can still reach here via custom sources alone.
+            val a = accents ?: NetAccents()
             sb.append("\n== QUESTION SOURCE MIX (the user's configured distribution for this net) ==\n")
             sb.append("Of the $batchSize questions, aim for approximately: ")
             val aims = ArrayList<String>(4)
@@ -172,6 +178,7 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
             if (dateTarget > 0) aims.add("$dateTarget tied to today's DATE")
             if (crossTarget > 0) aims.add("$crossTarget anchored in the OTHER NETS below")
             if (tailTarget > 0) aims.add("$tailTarget inspired by the LIFE-LOG below")
+            customTargets.forEach { (src, t) -> aims.add("$t from ${src.label}") }
             sb.append(aims.joinToString(", ")).append("; the remaining ").append(batchSize - accentTotal)
                 .append(" are core questions driven by the rest of this context. ")
                 .append("Treat the counts as targets, not straitjackets: if a source genuinely ")
@@ -197,6 +204,11 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
                 .append("light inspiration from them (a topic, entity or theme a note mentions), ")
                 .append("and must still fit this net's scope with a verifiable answer. ")
                 .append("Never quote the notes back and never ask about the user personally.\n")
+            }
+            for ((src, t) in customTargets) {
+                sb.append("- ${src.label} (${t} question(s); the user's own custom direction for this net):\n")
+                sb.append("  → ").append(src.guidance.replace('\n', ' ').trim()).append('\n')
+                sb.append("  → every such question must still satisfy Rule 1's factual rigor and fit this net's scope.\n")
             }
         }
 
