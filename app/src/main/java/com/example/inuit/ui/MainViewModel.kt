@@ -173,8 +173,13 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         pickNext()
     }
 
+    /** Skip = REJECT: the question is permanently retired from the queue and
+     *  pushed onto the net's rejection pile so the generator learns what not
+     *  to make (and, once the pile is full, re-distills its rejection notes). */
     fun skip() {
-        _currentQuestion.value?.let { store.markSkipped(it.id) }
+        _currentQuestion.value?.let {
+            if (store.rejectQuestion(it.id)) graph.generator.maybeRefreshRejectionNotes()
+        }
         pickNext()
     }
 

@@ -66,6 +66,12 @@ class QuestionGenerator(
         private const val GEN_MAX_TOKENS = 16_000
         private const val VERIFY_MAX_TOKENS = 4_000
         private const val SUMMARY_MAX_TOKENS = 4_000
+        private const val NOTES_MAX_TOKENS = 1_500
+
+        /** The rejection pile must reach this size before the LLM is asked
+         *  to distill (and then re-distill after every new rejection, since
+         *  each one bumps the earliest pile member out). */
+        private const val NOTES_PILE_THRESHOLD = 10
         private const val MAX_NETWORK_ATTEMPTS = 3
         private val RETRY_BACKOFF_MS = longArrayOf(5_000, 15_000)
 
@@ -178,6 +184,57 @@ class QuestionGenerator(
         genJob = scope.launch {
             try {
                 generateLoop(forced = true)
+            } finally {
+                endWork()
+            }
+        }
+    }
+
+    // ── rejection lessons ────────────────────────────────────────────────
+    // The user's skips build a capped FIFO pile of rejected questions.
+    // Once the pile reaches NOTES_PILE_THRESHOLD, the LLM distills general
+    // "what not to generate" rules from its previous notes + the full pile;
+    // every later rejection (which bumps the earliest pile member out)
+    // re-triggers a distillation. Between distillations, the raw pile AND
+    // the current notes are always part of the generation context.
+
+    private var notesJob: Job? = null
+
+    /** Called after each Skip; a no-op unless the active net's pile is full
+     *  and its notes are stale (pile changed since the last distillation). */
+    fun maybeRefreshRejectionNotes() {
+        if (notesJob?.isActive == true) return
+        val netId = netStore.active().id
+        val pile = store.rejectedPileFor(netId)
+        if (pile.size < NOTES_PILE_THRESHOLD) return
+        val stamp = store.rejectedPileFingerprint(netId)
+        if (store.rejectionNotesStampFor(netId) == stamp) return // notes current
+        beginWork()
+        notesJob = scope.launch {
+            try {
+                val s = settingsStore.current()
+                if (!s.llmConfigured) return@launch
+                val cfg = LlmConfig(s.baseUrl, s.apiKey, s.model)
+                val prev = store.rejectionNotesFor(netId)
+                val lines = pile.map { r ->
+                    val dom = r.domains.firstOrNull()?.let { ", $it" } ?: ""
+                    "(${r.type.lowercase()}, d${r.difficulty}$dom) ${r.prompt}"
+                }
+                val reply = llm.chat(
+                    cfg,
+                    listOf(LlmMessage.user(Prompts.rejectionNotesPrompt(prev, lines))),
+                    emptyList(),
+                    0.3f,
+                    NOTES_MAX_TOKENS,
+                    disableThinking = s.disableThinking
+                )
+                val notes = Prompts.parseRejectionNotes(reply.content ?: "")
+                if (notes.isNotBlank()) {
+                    store.setRejectionNotesFor(netId, notes, stamp)
+                    DebugLog.i(TAG, "rejection lessons refreshed for net '$netId' (${pile.size} rejected)")
+                }
+            } catch (e: Exception) {
+                DebugLog.w(TAG, "rejection lessons refresh failed (will retry on next skip): ${e.message}")
             } finally {
                 endWork()
             }

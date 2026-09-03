@@ -122,6 +122,18 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
             ctx.knownLines.forEach { sb.append(it).append('\n') }
         }
 
+        if (ctx.rejectedLines.isNotEmpty()) {
+            sb.append("\n== REJECTED QUESTIONS (the user explicitly SKIPPED these — read them as a pattern) ==\n")
+            ctx.rejectedLines.forEach { sb.append("- ").append(it).append('\n') }
+            sb.append("→ do NOT produce questions resembling these. Infer what KIND of question, topic treatment, ")
+                .append("style or flavor the user dislikes — avoid that whole category, not merely the literal facts.\n")
+        }
+
+        ctx.rejectionNotes?.let {
+            sb.append("\n== REJECTION LESSONS (distilled rules from previously rejected questions — binding guidance) ==\n")
+            sb.append(it.trim()).append('\n')
+        }
+
         if (ctx.noviceDomains.isNotEmpty()) {
             sb.append("\n== NOVICE DOMAINS (very low accuracy and/or off-category answers — the user may not know the basic entities) ==\n")
             ctx.noviceDomains.forEach { sb.append("- ").append(it)
@@ -292,6 +304,38 @@ Reply with a single JSON object, no fences: {"summaries": {"<domain>": "<summary
     }
 
     data class SummaryInput(val domain: String, val previous: String?, val lines: List<String>)
+
+    // ── Rejection lessons (distilled from the skipped-question pile) ──────
+
+    /**
+     * Re-distills the rejection notes: the LLM sees its own PREVIOUS notes
+     * (if any) plus the full current pile of rejected questions, and must
+     * derive broad, generalizable rules about what NOT to generate.
+     */
+    fun rejectionNotesPrompt(previousNotes: String?, rejectedLines: List<String>): String = buildString {
+        append("""
+You maintain the "rejection lessons" for Inuit, a question-generation app. The user sometimes skips questions they do not want; below is the current pile of REJECTED questions (oldest → newest). Your job: distill concise, GENERALIZABLE rules about what KINDS of questions this user dislikes — style, subject treatment, difficulty flavor, format annoyances, topic fatigue — so the generator avoids producing similar ones. Infer patterns; do not merely restate the literal topics.
+
+Rules:
+- Max 120 words. Plain prose or short dash bullets. No fluff, no preamble.
+- Your reply REPLACES the previous lessons entirely: carry forward whatever still holds, revise or drop what the newest pile members contradict.
+- Concrete enough to act on ("avoid X-style questions because …"), broad enough to cover future cases.
+
+Reply with a single JSON object, no markdown fences: {"notes": "..."}
+
+""".trimIndent())
+        if (previousNotes.isNullOrBlank()) append("PREVIOUS LESSONS: (none — this is the first distillation)\n\n")
+        else append("PREVIOUS LESSONS:\n").append(previousNotes.trim()).append("\n\n")
+        append("REJECTED QUESTIONS (oldest → newest):\n")
+        rejectedLines.forEach { append("- ").append(it).append('\n') }
+    }
+
+    /** Parses the notes reply; empty string when unusable. */
+    fun parseRejectionNotes(json: String): String = try {
+        JSONObject(extractJson(json)).optString("notes").trim().take(1200)
+    } catch (e: Exception) {
+        ""
+    }
 
     fun parseSummaries(json: String): Map<String, String> {
         val obj = JSONObject(extractJson(json))

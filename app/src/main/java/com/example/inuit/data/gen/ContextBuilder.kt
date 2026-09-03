@@ -43,6 +43,10 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         val summaries: List<KnowledgeSummary>,
         val distantFrontiers: List<String>,
         val revisitFrontiers: List<String>,
+        /** Rendered lines of the current user-rejected-question pile. */
+        val rejectedLines: List<String> = emptyList(),
+        /** LLM-distilled rules on what kinds of questions the user dislikes. */
+        val rejectionNotes: String? = null,
         val totalsLine: String
     ) {
         val markerToQuestion: Map<String, Question>
@@ -154,12 +158,19 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         else plan.distant.ifEmpty { listOf(RealmTaxonomy.ALL_REALMS[rng.nextInt(RealmTaxonomy.ALL_REALMS.size)]) }
         val revisits = plan.revisits
 
+        // ── rejection pile (anti-patterns the user has explicitly refused) ──
+        val rejectedLines = store.rejectedPileFor(nid).map { r ->
+            val dom = r.domains.firstOrNull()?.let { ", $it" } ?: ""
+            "(${r.type.lowercase()}, d${r.difficulty}$dom) ${r.prompt}"
+        }
+        val rejectionNotes = store.rejectionNotesFor(nid)
+
         val totals = "answers=${answers.size} correct=${answers.count { it.correct }} " +
             "questionsAsked=${questions.count { it.servedCount > 0 }} queued=${store.queueSizeFor(nid)}"
 
         return Context(
             recentLines, unknownGroups, knownLines, digest.toList(), noviceLines,
-            challengeLines, summaries, distant, revisits, totals
+            challengeLines, summaries, distant, revisits, rejectedLines, rejectionNotes, totals
         )
     }
 

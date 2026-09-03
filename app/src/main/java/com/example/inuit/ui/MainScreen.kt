@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -34,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -118,7 +120,13 @@ fun MainScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
+        // A new question must always land fully scrolled to the top: content
+        // above/below shifts between questions (choice lists, stats chips)
+        // and the LazyColumn's scroll offset otherwise drifts downward.
+        val listState = rememberLazyListState()
+        LaunchedEffect(question?.id) { listState.scrollToItem(0) }
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 24.dp

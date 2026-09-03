@@ -59,7 +59,10 @@ data class Question(
     val rationale: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val servedCount: Int = 0,
-    val skipCount: Int = 0
+    val skipCount: Int = 0,
+    /** User rejected it via Skip — never served again, kept only as an
+     *  anti-pattern example for the generator's rejection pile. */
+    val rejected: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -83,6 +86,7 @@ data class Question(
         put("createdAt", createdAt)
         put("servedCount", servedCount)
         put("skipCount", skipCount)
+        put("rejected", rejected)
     }
 
     companion object {
@@ -107,7 +111,8 @@ data class Question(
             rationale = o.optString("rationale").ifBlank { null },
             createdAt = o.optLong("createdAt", System.currentTimeMillis()),
             servedCount = o.optInt("servedCount", 0),
-            skipCount = o.optInt("skipCount", 0)
+            skipCount = o.optInt("skipCount", 0),
+            rejected = o.optBoolean("rejected", false)
         )
     }
 }
@@ -155,6 +160,38 @@ data class KnowledgeSummary(
     val createdAt: Long,
     val coveredAnswers: Int
 )
+
+/**
+ * One user-rejected (skipped) question, kept in a per-net FIFO "rejection
+ * pile" (capped at [com.example.inuit.data.QuestionStore.REJECTED_PILE_MAX])
+ * so the LLM can learn broad anti-patterns from what the user refuses to
+ * answer. Only what the generator needs — never the answer.
+ */
+data class RejectedQuestion(
+    val prompt: String,
+    val type: String,
+    val domains: List<String>,
+    val difficulty: Int,
+    val rejectedAt: Long
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("prompt", prompt)
+        put("type", type)
+        put("domains", JSONArray(domains))
+        put("difficulty", difficulty)
+        put("ts", rejectedAt)
+    }
+
+    companion object {
+        fun fromJson(o: JSONObject) = RejectedQuestion(
+            prompt = o.optString("prompt"),
+            type = o.optString("type"),
+            domains = o.optJSONArray("domains").toStringList(),
+            difficulty = o.optInt("difficulty", 3).coerceIn(1, 5),
+            rejectedAt = o.optLong("ts", System.currentTimeMillis())
+        )
+    }
+}
 
 /**
  * One LLM-chosen podcast episode targeting the user's weakest knowledge

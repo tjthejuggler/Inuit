@@ -41,6 +41,9 @@ class QuestionStore(
         private const val FILE_SUFFIX = ".json"
         private const val PERSIST_DEBOUNCE_MS = 1200L
 
+        /** Cap of the per-net rejected-question pile (FIFO beyond this). */
+        const val REJECTED_PILE_MAX = 10
+
         /** The All net keeps the legacy filename; others are namespaced. */
         fun fileNameFor(netId: String): String =
             if (netId == Net.ALL_ID) FILE else "$FILE_PREFIX$netId$FILE_SUFFIX"
@@ -70,6 +73,16 @@ class QuestionStore(
 
         /** Answer count already covered by this net's rolling summaries. */
         var summarizedAnswers: Int = 0
+
+        /** FIFO pile of user-rejected questions (capped at REJECTED_PILE_MAX)
+         *  — the LLM's anti-pattern learning material. */
+        val rejectedPile = mutableListOf<RejectedQuestion>()
+
+        /** LLM-distilled rules on what kinds of questions to avoid. */
+        var rejectionNotes: String? = null
+
+        /** Fingerprint of the pile the notes were last distilled from. */
+        var rejectionNotesStamp: String = ""
     }
 
     private val lock = Any()
@@ -174,13 +187,13 @@ class QuestionStore(
     /** The persisted on-screen question, if it is still unanswered. */
     fun pendingQuestion(): Question? = synchronized(lock) {
         val st = activeState()
-        st.pendingId?.let { st.byId[it] }?.takeIf { it.servedCount == 0 }
+        st.pendingId?.let { st.byId[it] }?.takeIf { it.servedCount == 0 && !it.rejected }
     }
 
-    /** Unserved questions = the live queue. */
-    fun queue(): List<Question> = synchronized(lock) { activeState().questions.filter { it.servedCount == 0 } }
+    /** Unserved questions = the live queue (rejected ones are gone for good). */
+    fun queue(): List<Question> = synchronized(lock) { activeState().questions.filter { it.servedCount == 0 && !it.rejected } }
 
-    fun queueSize(): Int = synchronized(lock) { activeState().questions.count { it.servedCount == 0 } }
+    fun queueSize(): Int = synchronized(lock) { activeState().questions.count { it.servedCount == 0 && !it.rejected } }
 
     // ── Reads (other nets — cross-net generation accents) ────────────────
     // These power the "sprinkle in knowledge from other nets" option: the
@@ -205,7 +218,7 @@ class QuestionStore(
     /** Unserved questions of any net — the background refill scheduler
      *  needs this for nets the user is not currently training in. */
     fun queueSizeFor(netId: String): Int =
-        synchronized(lock) { stateFor(netId).questions.count { it.servedCount == 0 } }
+        synchronized(lock) { stateFor(netId).questions.count { it.servedCount == 0 && !it.rejected } }
 
     /** Answer count already folded into any net's rolling summaries. */
     fun summarizedAnswersFor(netId: String): Int =
@@ -301,17 +314,63 @@ class QuestionStore(
         return record
     }
 
-    /** Skip: stays in the queue but with a penalty so it doesn't reappear immediately. */
-    fun markSkipped(questionId: String) {
+    /** REJECT (Skip button): the question is permanently removed from the
+     *  queue and pushed onto the net's rejection pile (capped FIFO — a new
+     *  reject beyond the cap bumps the earliest one out). The pile is the
+     *  LLM's anti-pattern learning material; rejected questions are also
+     *  kept in the store so they still block regeneration via dedup.
+     *  Returns true when this call actually rejected something. */
+    fun rejectQuestion(questionId: String): Boolean {
+        var changed = false
         synchronized(lock) {
             val st = activeState()
-            val q = st.byId[questionId] ?: return
-            val updated = q.copy(skipCount = q.skipCount + 1)
-            val idx = st.questions.indexOfFirst { it.id == questionId }
-            if (idx >= 0) st.questions[idx] = updated
-            st.byId[questionId] = updated
+            val q = st.byId[questionId] ?: return false
+            if (!q.rejected) {
+                val updated = q.copy(rejected = true, skipCount = q.skipCount + 1)
+                val idx = st.questions.indexOfFirst { it.id == questionId }
+                if (idx >= 0) st.questions[idx] = updated
+                st.byId[questionId] = updated
+                st.rejectedPile.add(
+                    RejectedQuestion(q.prompt, q.type.name, q.domains, q.difficulty, System.currentTimeMillis())
+                )
+                if (st.rejectedPile.size > REJECTED_PILE_MAX) st.rejectedPile.removeAt(0)
+                changed = true
+            }
+        }
+        if (changed) {
+            bump()
+            persistImmediately() // a rejection must survive process death
+        }
+        return changed
+    }
+
+    /** The net's current rejection pile (oldest → newest), for generation context. */
+    fun rejectedPileFor(netId: String): List<RejectedQuestion> =
+        synchronized(lock) { stateFor(netId).rejectedPile.toList() }
+
+    /** LLM-distilled rejection notes for a net (null until first distilled). */
+    fun rejectionNotesFor(netId: String): String? =
+        synchronized(lock) { stateFor(netId).rejectionNotes }
+
+    /** Pile fingerprint the current notes were distilled from. */
+    fun rejectionNotesStampFor(netId: String): String =
+        synchronized(lock) { stateFor(netId).rejectionNotesStamp }
+
+    /** Fingerprint of the current pile — lets the notes refresh detect staleness. */
+    fun rejectedPileFingerprint(netId: String): String = synchronized(lock) {
+        stateFor(netId).rejectedPile.joinToString("\u0001") { it.prompt }.hashCode().toString()
+    }
+
+    /** Stores freshly distilled rejection notes together with the pile
+     *  fingerprint they were derived from. */
+    fun setRejectionNotesFor(netId: String, notes: String, stamp: String) {
+        synchronized(lock) {
+            val st = stateFor(netId)
+            st.rejectionNotes = notes
+            st.rejectionNotesStamp = stamp
         }
         bump()
+        persistImmediately()
     }
 
     fun replaceSummaries(newSummaries: List<KnowledgeSummary>) {
@@ -437,6 +496,9 @@ class QuestionStore(
         put("podcastSeen", JSONArray().apply { st.podcastSeen.forEach { put(it.toJson()) } })
         st.pendingId?.let { put("pending", it) }
         put("summarized", st.summarizedAnswers)
+        put("rejectPile", JSONArray().apply { st.rejectedPile.forEach { put(it.toJson()) } })
+        st.rejectionNotes?.let { put("rejectNotes", it) }
+        put("rejectNotesStamp", st.rejectionNotesStamp)
     }
 
     private fun writePayload(netId: String, payload: JSONObject) {
@@ -504,6 +566,12 @@ class QuestionStore(
             }
             st.pendingId = root.optString("pending").ifBlank { null }
             st.summarizedAnswers = root.optInt("summarized", 0)
+            val rp = root.optJSONArray("rejectPile")
+            if (rp != null) for (i in 0 until rp.length()) {
+                st.rejectedPile.add(RejectedQuestion.fromJson(rp.optJSONObject(i) ?: continue))
+            }
+            st.rejectionNotes = root.optString("rejectNotes").ifBlank { null }
+            st.rejectionNotesStamp = root.optString("rejectNotesStamp")
             Log.i(TAG, "net $netId: loaded ${st.questions.size} questions, ${st.answers.size} answers")
         } catch (e: Exception) {
             Log.e(TAG, "net $netId load failed — starting empty", e)

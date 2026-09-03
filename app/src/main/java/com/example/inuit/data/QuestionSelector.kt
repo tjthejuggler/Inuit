@@ -53,7 +53,7 @@ object QuestionSelector {
         rng: Random
     ): Question? {
         val byId = questions.associateBy { it.id }
-        val queue = questions.filter { it.servedCount == 0 }
+        val queue = questions.filter { it.servedCount == 0 && !it.rejected }
         val candidates = queue.filter { it.id != currentId }.ifEmpty { queue }
         val revisits = revisitCandidates(questions, answers, currentId, byId)
 
