@@ -59,8 +59,8 @@ import com.example.inuit.ui.theme.Teal
 
 /**
  * Main screen: the question card pinned on top; everything below is the
- * stats/knowledge-map scroll. Stats are session-frozen (blind training):
- * they refresh only when the user returns to the app.
+ * stats/knowledge-map scroll. Every submitted answer flashes its result
+ * ("Correct!" or the correct answer) and refreshes the stats in real time.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,6 +79,11 @@ fun MainScreen(
     val podcast by viewModel.podcast.collectAsStateWithLifecycle()
     val podcastLoading by viewModel.podcastLoading.collectAsStateWithLifecycle()
     val podcastHistory by viewModel.podcastHistory.collectAsStateWithLifecycle()
+    val lastFlash by viewModel.lastFlash.collectAsStateWithLifecycle()
+
+    // Domain-tree leaf drill-down: the path and its Question History list.
+    var historyDomain by remember { mutableStateOf<String?>(null) }
+    var historyItems by remember { mutableStateOf<List<MainViewModel.QuestionHistoryItem>>(emptyList()) }
 
     Scaffold(
         topBar = {
@@ -145,6 +150,12 @@ fun MainScreen(
                             // redundant — the card shows the subtopic only.
                             netName = activeNet.takeIf { !it.isAll }?.name
                         )
+                        // The previous answer's result: "Correct!" or the
+                        // correct answer, shown until the next submit/skip.
+                        lastFlash?.let { flash ->
+                            Spacer(Modifier.height(6.dp))
+                            AnswerFlashBanner(flash)
+                        }
                         // Generation progress / errors sit below the question.
                         if (genState is GenState.Running || genState is GenState.Error) {
                             Spacer(Modifier.height(6.dp))
@@ -174,10 +185,22 @@ fun MainScreen(
                     onOpenPodcast = viewModel::onPodcastOpened,
                     onOpenHistoryPodcast = viewModel::onHistoryPodcastOpened,
                     onOpenSettings = onOpenSettings,
-                    onOpenKnowledgeMap = onOpenKnowledgeMap
+                    onOpenKnowledgeMap = onOpenKnowledgeMap,
+                    onOpenHistory = { path ->
+                        historyDomain = path
+                        historyItems = viewModel.questionHistory(path)
+                    }
                 )
             }
         }
+    }
+
+    historyDomain?.let { path ->
+        QuestionHistoryDialog(
+            domainPath = path,
+            items = historyItems,
+            onDismiss = { historyDomain = null }
+        )
     }
 }
 

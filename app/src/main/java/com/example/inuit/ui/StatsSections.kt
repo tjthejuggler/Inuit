@@ -43,10 +43,7 @@ import java.util.Locale
 
 /**
  * The whole stats panel rendered below the (collapsible) question card.
- *
- * BLIND-TRAINING NOTE: this snapshot is frozen for the duration of a
- * session — it reflects everything answered up to the moment the user
- * last entered the app, never the current session's answers.
+ * The snapshot updates in real time — every submitted answer refreshes it.
  */
 @Composable
 fun StatsPanel(
@@ -60,7 +57,8 @@ fun StatsPanel(
     onOpenPodcast: (PodcastRec) -> Unit = {},
     onOpenHistoryPodcast: (PodcastRec) -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    onOpenKnowledgeMap: () -> Unit = {}
+    onOpenKnowledgeMap: () -> Unit = {},
+    onOpenHistory: (domainPath: String) -> Unit = {}
 ) {
     OverviewChips(stats, liveQueueSize)
     if (stats.totalAnswers == 0) {
@@ -74,7 +72,7 @@ fun StatsPanel(
     KnowledgeMapCard(stats, onOpenKnowledgeMap)
     ProficiencyCard(stats)
     WeakestStrongestCards(stats)
-    DomainTreeCard(stats)
+    DomainTreeCard(stats, onOpenHistory)
     ActivityCard(stats)
     TimeOfDayCard(stats)
     GrowthCard(stats)
@@ -106,7 +104,7 @@ private fun OverviewChips(stats: StatsCalculator.Snapshot, liveQueueSize: Int) {
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            "Reflects every answer up to your last visit — this session stays unread.",
+            "Updates live as you answer.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp)
@@ -312,16 +310,20 @@ private fun MiniDomainRow(d: StatsCalculator.DomainAgg) {
 // ── domain tree (grows in complexity over time) ───────────────────────────
 
 @Composable
-private fun DomainTreeCard(stats: StatsCalculator.Snapshot) {
+private fun DomainTreeCard(
+    stats: StatsCalculator.Snapshot,
+    onOpenHistory: (String) -> Unit
+) {
     if (stats.domainTree.isEmpty()) return
-    SectionCard(title = "Domain tree", subtitle = "tap a realm to unfold its branches") {
+    SectionCard(title = "Domain tree", subtitle = "tap a realm to unfold · tap a leaf for question history") {
         val expanded = rememberSaveable { mutableStateOf(setOf<String>()) }
         stats.domainTree.forEach { node ->
             DomainTreeNode(node, depth = 0, expanded = expanded.value,
                 onToggle = { path ->
                     expanded.value = if (path in expanded.value) expanded.value - path
                     else expanded.value + path
-                })
+                },
+                onOpenHistory = onOpenHistory)
         }
     }
 }
@@ -331,15 +333,17 @@ private fun DomainTreeNode(
     node: StatsCalculator.DomainNode,
     depth: Int,
     expanded: Set<String>,
-    onToggle: (String) -> Unit
+    onToggle: (String) -> Unit,
+    onOpenHistory: (String) -> Unit
 ) {
     val isOpen = node.path in expanded
+    val isLeaf = node.children.isEmpty()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .clickable(enabled = node.children.isNotEmpty()) { onToggle(node.path) }
+            .clickable { if (isLeaf) onOpenHistory(node.path) else onToggle(node.path) }
             .padding(start = (depth * 18).dp, top = 6.dp, bottom = 6.dp, end = 4.dp)
     ) {
         if (node.children.isNotEmpty()) {
@@ -367,7 +371,7 @@ private fun DomainTreeNode(
     }
     if (isOpen) {
         node.children.forEach { child ->
-            DomainTreeNode(child, depth + 1, expanded, onToggle)
+            DomainTreeNode(child, depth + 1, expanded, onToggle, onOpenHistory)
         }
     }
 }

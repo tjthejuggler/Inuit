@@ -15,6 +15,7 @@ import com.example.inuit.data.PodcastDirectory
 import com.example.inuit.data.PodcastRec
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionSelector
+import com.example.inuit.data.QuestionType
 import com.example.inuit.data.StatsCalculator
 import com.example.inuit.data.llm.LlmConfig
 import com.example.inuit.data.llm.McpClient
@@ -36,17 +37,30 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     private val store = graph.store
     private val rng = Random.Default
 
-    // ── session boundary (blind-training invariant) ──────────────────────
-    // The user must NEVER learn whether specific answers were right or
-    // wrong. Answers are graded and persisted, but everything that could
-    // reflect correctness — stats, knowledge summaries, Socratic follow-up
-    // threads — is frozen at the moment the session started and only
-    // refreshes when the user comes back to the app (onResume).
+    // ── session boundary ─────────────────────────────────────────────────
+    // Answers are graded, persisted, revealed to the user immediately, and
+    // folded into the on-screen stats in real time. The boundary timestamp
+    // still exists: QuestionSelector uses it so Socratic follow-up threads
+    // only trigger from misses in PRIOR sessions, not the current one.
 
     private var sessionBoundaryMs: Long = System.currentTimeMillis()
 
-    /** Ticks only on session start / app resume — drives stats recomputation. */
+    /** Ticks on answer / session start / app resume — drives stats recomputation. */
     private val statsEpoch = MutableStateFlow(0L)
+
+    // ── answer flash (revealed correctness) ──────────────────────────────
+
+    /** What the user sees right after submitting: "Correct!" or the answer. */
+    data class AnswerFlash(
+        val correct: Boolean,
+        /** Canonical correct answer text — shown when the answer was wrong. */
+        val correctAnswer: String
+    )
+
+    private val _lastFlash = MutableStateFlow<AnswerFlash?>(null)
+
+    /** The most recent answer's result; replaced on each submit, cleared on skip. */
+    val lastFlash: StateFlow<AnswerFlash?> = _lastFlash.asStateFlow()
 
     // ── current question ─────────────────────────────────────────────────
 
@@ -155,16 +169,19 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     /**
-     * Grades locally (verdict never reaches the UI), records, refills the
-     * queue and IMMEDIATELY advances to the next question — no acknowledgment
-     * screen, no extra tap. The [questionId] guard makes the instant advance
-     * safe: a stale double-tap on the old answer button is ignored instead of
-     * grading the already-replaced current question.
+     * Grades locally, records, refills the queue, flashes the result
+     * ("Correct!" or the correct answer), refreshes stats in real time and
+     * IMMEDIATELY advances to the next question — no extra tap. The
+     * [questionId] guard makes the instant advance safe: a stale double-tap
+     * on the old answer button is ignored instead of grading the
+     * already-replaced current question.
      */
     fun submitAnswer(questionId: String, raw: String, elapsedMs: Long) {
         val q = _currentQuestion.value ?: return
         if (q.id != questionId) return
         val correct = Grader.grade(q, raw)
+        _lastFlash.value = AnswerFlash(correct, q.correctAnswerDisplay)
+        statsEpoch.value = statsEpoch.value + 1L
         val record = store.recordAnswer(q.id, correct, raw, elapsedMs)
         // Every persisted answer ticks the connected Tail habit by +1, stamped
         // at the exact answer time so Tail's schedule timeline is accurate.
@@ -177,13 +194,76 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
      *  pushed onto the net's rejection pile so the generator learns what not
      *  to make (and, once the pile is full, re-distills its rejection notes). */
     fun skip() {
+        _lastFlash.value = null
         _currentQuestion.value?.let {
             if (store.rejectQuestion(it.id)) graph.generator.maybeRefreshRejectionNotes()
         }
         pickNext()
     }
 
-    // ── stats (frozen per session; refresh only on app resume) ───────────
+    // ── stats (real time: recomputed on every submitted answer) ─────────
+
+    // ── question history (per-domain leaf drill-down) ────────────────────
+
+    /** One row of the per-domain Question History list. */
+    data class QuestionHistoryItem(
+        val questionId: String,
+        val prompt: String,
+        val correctAnswer: String,
+        val attempts: Int,
+        val correctCount: Int,
+        val lastUserAnswer: String,
+        /** Human-readable version of what the user chose/typed (MC choice text, not index). */
+        val lastUserAnswerDisplay: String,
+        val lastCorrect: Boolean,
+        val lastAnsweredAt: Long
+    )
+
+    /**
+     * Every answered question whose domain matches the tree-leaf path
+     * (already net-stripped, as [StatsCalculator.DomainNode.path] is).
+     * Newest answer first.
+     */
+    fun questionHistory(domainPath: String): List<QuestionHistoryItem> {
+        val netName = graph.netStore.active().takeIf { !it.isAll }?.name
+        val questions = store.snapshotQuestions()
+        val answers = store.snapshotAnswers()
+        val byQuestion = answers.groupBy { it.questionId }
+        return questions.mapNotNull { q ->
+            if (q.domains.none { strippedPath(it, netName).equals(domainPath, ignoreCase = true) }) return@mapNotNull null
+            val recs = byQuestion[q.id] ?: return@mapNotNull null
+            val last = recs.maxBy { it.timestamp }
+            QuestionHistoryItem(
+                questionId = q.id,
+                prompt = q.prompt,
+                correctAnswer = q.correctAnswerDisplay,
+                attempts = recs.size,
+                correctCount = recs.count { it.correct },
+                lastUserAnswer = last.userAnswer,
+                lastUserAnswerDisplay = userAnswerDisplay(q, last.userAnswer),
+                lastCorrect = last.correct,
+                lastAnsweredAt = last.timestamp
+            )
+        }.sortedByDescending { it.lastAnsweredAt }
+    }
+
+    /** Raw stored answers → readable text: MC stores the choice INDEX. */
+    private fun userAnswerDisplay(q: Question, raw: String): String = when (q.type) {
+        QuestionType.MULTIPLE_CHOICE ->
+            raw.trim().toIntOrNull()?.let { q.choices.getOrNull(it) } ?: raw
+        QuestionType.TRUE_FALSE -> raw.trim().replaceFirstChar { it.uppercase() }
+        else -> raw
+    }
+
+    /** Net-stripped display path for a stored domain tag (see StatsCalculator.topKey). */
+    private fun strippedPath(path: String, netName: String?): String {
+        val segs = path.split(" > ").map { it.trim() }.filter { it.isNotEmpty() }
+        if (segs.isEmpty()) return path
+        if (netName != null && segs.size >= 2 && segs[0].equals(netName.trim(), ignoreCase = true)) {
+            return segs.drop(1).joinToString(" > ")
+        }
+        return segs.joinToString(" > ")
+    }
 
     val stats: StateFlow<StatsCalculator.Snapshot> =
         statsEpoch

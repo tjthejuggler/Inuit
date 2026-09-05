@@ -46,13 +46,9 @@ import com.example.inuit.ui.theme.Teal
 import kotlin.random.Random
 
 /**
- * The question card. CRITICAL INVARIANTS:
- *  - never render the question's stored answer,
- *  - never signal whether an answer was correct or wrong (blind training).
- *    Submitting advances to the next question IMMEDIATELY — no correctness
- *    acknowledgment, no "next" tap. Correctness only ever surfaces as
- *    aggregate, session-frozen statistics that refresh when the user
- *    returns to the app.
+ * The question card. Submitting advances to the next question immediately —
+ * the result of the just-submitted answer ("Correct!" or the correct
+ * answer) flashes in a banner right below this card, and stats update live.
  */
 @Composable
 fun QuestionCard(

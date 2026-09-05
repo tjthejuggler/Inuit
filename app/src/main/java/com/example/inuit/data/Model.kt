@@ -7,9 +7,9 @@ import java.util.UUID
 /**
  * Core domain model for Inuit.
  *
- * IMPORTANT INVARIANT: [Question] carries the correct answer (needed for local
- * grading and for the generator to build consistent sub-questions) but NO UI
- * path may ever render it. The app is Socratic: it never reveals answers.
+ * [Question] carries the correct answer for local grading. Answers are
+ * revealed to the user immediately after each submission ("Correct!" or the
+ * correct answer) and in the per-domain Question History list.
  */
 
 enum class QuestionType(val displayName: String) {
@@ -64,6 +64,22 @@ data class Question(
      *  anti-pattern example for the generator's rejection pile. */
     val rejected: Boolean = false
 ) {
+    /** Human-readable canonical correct answer, used for the post-answer
+     *  flash and the Question History list. */
+    val correctAnswerDisplay: String
+        get() = when (type) {
+            QuestionType.TRUE_FALSE ->
+                answerBool?.let { if (it) "True" else "False" } ?: "—"
+            QuestionType.MULTIPLE_CHOICE ->
+                answerIndex?.let { choices.getOrNull(it) } ?: "—"
+            QuestionType.NUMERIC ->
+                answerNumber?.let {
+                    if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
+                } ?: "—"
+            QuestionType.FILL_BLANK ->
+                acceptedAnswers.firstOrNull() ?: "—"
+        }
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("type", type.name)
