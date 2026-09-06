@@ -44,6 +44,10 @@ import java.time.format.DateTimeFormatter
  */
 @Composable
 fun AnswerFlashBanner(flash: MainViewModel.AnswerFlash) {
+    var showDetail by remember { mutableStateOf(false) }
+    if (showDetail) {
+        AnswerFlashDialog(flash) { showDetail = false }
+    }
     val correct = flash.correct
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -51,6 +55,7 @@ fun AnswerFlashBanner(flash: MainViewModel.AnswerFlash) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(if (correct) Teal.copy(alpha = 0.14f) else Rose.copy(alpha = 0.14f))
+            .clickable { showDetail = true }
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         Icon(
@@ -69,6 +74,60 @@ fun AnswerFlashBanner(flash: MainViewModel.AnswerFlash) {
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+/** Tapping the flash banner opens this recap: question, your answer, correct answer. */
+@Composable
+private fun AnswerFlashDialog(flash: MainViewModel.AnswerFlash, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (flash.correct) Icons.Default.CheckCircle else Icons.Default.Cancel,
+                    contentDescription = if (flash.correct) "Correct" else "Incorrect",
+                    tint = if (flash.correct) Teal else Rose
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (flash.correct) "Correct!" else "Not quite",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+        },
+        text = {
+            Column {
+                Text(
+                    flash.prompt,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Your answer",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    flash.userAnswer,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (flash.correct) Teal else Rose
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Correct answer",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    flash.correctAnswer,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    )
 }
 
 /**

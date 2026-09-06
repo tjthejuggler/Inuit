@@ -54,7 +54,11 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     data class AnswerFlash(
         val correct: Boolean,
         /** Canonical correct answer text — shown when the answer was wrong. */
-        val correctAnswer: String
+        val correctAnswer: String,
+        /** The full question prompt — shown when the banner is tapped. */
+        val prompt: String,
+        /** What the user actually chose/typed, readable (MC choice text). */
+        val userAnswer: String
     )
 
     private val _lastFlash = MutableStateFlow<AnswerFlash?>(null)
@@ -180,7 +184,7 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         val q = _currentQuestion.value ?: return
         if (q.id != questionId) return
         val correct = Grader.grade(q, raw)
-        _lastFlash.value = AnswerFlash(correct, q.correctAnswerDisplay)
+        _lastFlash.value = AnswerFlash(correct, q.correctAnswerDisplay, q.prompt, userAnswerDisplay(q, raw))
         statsEpoch.value = statsEpoch.value + 1L
         val record = store.recordAnswer(q.id, correct, raw, elapsedMs)
         // Every persisted answer ticks the connected Tail habit by +1, stamped
