@@ -47,6 +47,8 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
         val rejectedLines: List<String> = emptyList(),
         /** LLM-distilled rules on what kinds of questions the user dislikes. */
         val rejectionNotes: String? = null,
+        /** Generalized rules from LLM-adjudicated grading disputes. */
+        val gradingLessons: List<String> = emptyList(),
         val totalsLine: String
     ) {
         val markerToQuestion: Map<String, Question>
@@ -164,13 +166,15 @@ class ContextBuilder(private val store: QuestionStore, private val rng: Random =
             "(${r.type.lowercase()}, d${r.difficulty}$dom) ${r.prompt}"
         }
         val rejectionNotes = store.rejectionNotesFor(nid)
+        val gradingLessons = store.gradingLessonsFor(nid)
 
         val totals = "answers=${answers.size} correct=${answers.count { it.correct }} " +
             "questionsAsked=${questions.count { it.servedCount > 0 }} queued=${store.queueSizeFor(nid)}"
 
         return Context(
             recentLines, unknownGroups, knownLines, digest.toList(), noviceLines,
-            challengeLines, summaries, distant, revisits, rejectedLines, rejectionNotes, totals
+            challengeLines, summaries, distant, revisits, rejectedLines, rejectionNotes,
+            gradingLessons, totals
         )
     }
 

@@ -17,7 +17,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,10 +45,14 @@ import java.time.format.DateTimeFormatter
  * "Correct!" in teal, or the correct answer in rose when the user missed.
  */
 @Composable
-fun AnswerFlashBanner(flash: MainViewModel.AnswerFlash) {
+fun AnswerFlashBanner(
+    flash: MainViewModel.AnswerFlash,
+    reviewState: MainViewModel.ReviewState = MainViewModel.ReviewState.Idle,
+    onReview: () -> Unit = {}
+) {
     var showDetail by remember { mutableStateOf(false) }
     if (showDetail) {
-        AnswerFlashDialog(flash) { showDetail = false }
+        AnswerFlashDialog(flash, reviewState, onReview) { showDetail = false }
     }
     val correct = flash.correct
     Row(
@@ -76,9 +82,15 @@ fun AnswerFlashBanner(flash: MainViewModel.AnswerFlash) {
     }
 }
 
-/** Tapping the flash banner opens this recap: question, your answer, correct answer. */
+/** Tapping the flash banner opens this recap: question, your answer, correct
+ *  answer — plus the dispute button when the user thinks it was scored wrong. */
 @Composable
-private fun AnswerFlashDialog(flash: MainViewModel.AnswerFlash, onDismiss: () -> Unit) {
+private fun AnswerFlashDialog(
+    flash: MainViewModel.AnswerFlash,
+    reviewState: MainViewModel.ReviewState,
+    onReview: () -> Unit,
+    onDismiss: () -> Unit
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
@@ -125,6 +137,57 @@ private fun AnswerFlashDialog(flash: MainViewModel.AnswerFlash, onDismiss: () ->
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
+                if (flash.answerRecordId != null) {
+                    Spacer(Modifier.height(14.dp))
+                    when (reviewState) {
+                        is MainViewModel.ReviewState.Idle -> OutlinedButton(
+                            onClick = onReview,
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("Scored in error? Submit for review") }
+
+                        is MainViewModel.ReviewState.Running -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(strokeWidth = 1.6.dp, modifier = Modifier.width(14.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Reviewing…", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        is MainViewModel.ReviewState.Overturned -> Column {
+                            Text(
+                                "✓ Overturned — your answer counts as correct",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Teal
+                            )
+                            reviewState.lesson?.let {
+                                Text(
+                                    "Learned rule: $it",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        is MainViewModel.ReviewState.Upheld -> Column {
+                            Text(
+                                "Original score upheld",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Rose
+                            )
+                            reviewState.lesson?.let {
+                                Text(
+                                    "Learned rule: $it",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        is MainViewModel.ReviewState.Failed -> Text(
+                            "Review failed: ${reviewState.message}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Rose
+                        )
+                    }
+                }
             }
         }
     )

@@ -134,6 +134,11 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
             sb.append(it.trim()).append('\n')
         }
 
+        if (ctx.gradingLessons.isNotEmpty()) {
+            sb.append("\n== GRADING LESSONS (rules learned from LLM-adjudicated grading disputes — binding guidance) ==\n")
+            ctx.gradingLessons.forEach { sb.append("- ").append(it).append('\n') }
+        }
+
         if (ctx.noviceDomains.isNotEmpty()) {
             sb.append("\n== NOVICE DOMAINS (very low accuracy and/or off-category answers — the user may not know the basic entities) ==\n")
             ctx.noviceDomains.forEach { sb.append("- ").append(it)

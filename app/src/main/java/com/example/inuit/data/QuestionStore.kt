@@ -44,6 +44,9 @@ class QuestionStore(
         /** Cap of the per-net rejected-question pile (FIFO beyond this). */
         const val REJECTED_PILE_MAX = 10
 
+        /** Cap of the per-net generalized grading lessons (FIFO beyond this). */
+        const val GRADING_LESSONS_MAX = 12
+
         /** The All net keeps the legacy filename; others are namespaced. */
         fun fileNameFor(netId: String): String =
             if (netId == Net.ALL_ID) FILE else "$FILE_PREFIX$netId$FILE_SUFFIX"
@@ -80,6 +83,10 @@ class QuestionStore(
 
         /** LLM-distilled rules on what kinds of questions to avoid. */
         var rejectionNotes: String? = null
+
+        /** Generalized rules distilled from LLM-adjudicated grading disputes
+         *  (capped FIFO — context stays bounded). */
+        val gradingLessons = mutableListOf<String>()
 
         /** Fingerprint of the pile the notes were last distilled from. */
         var rejectionNotesStamp: String = ""
@@ -373,6 +380,59 @@ class QuestionStore(
         persistImmediately()
     }
 
+    /** Generalized grading rules distilled from upheld disputes (for generation context). */
+    fun gradingLessonsFor(netId: String): List<String> =
+        synchronized(lock) { stateFor(netId).gradingLessons.toList() }
+
+    /** Adds a grading lesson (deduped, capped FIFO to avoid context bloat). */
+    fun addGradingLessonFor(netId: String, lesson: String) {
+        val t = lesson.trim()
+        if (t.isEmpty()) return
+        synchronized(lock) {
+            val st = stateFor(netId)
+            st.gradingLessons.removeAll { it.equals(t, ignoreCase = true) }
+            st.gradingLessons.add(t)
+            if (st.gradingLessons.size > GRADING_LESSONS_MAX) st.gradingLessons.removeAt(0)
+        }
+        bump()
+        persistImmediately()
+    }
+
+    /**
+     * Re-adjudication outcome: flips one answer record's correctness and
+     * adjusts the live domain stats to match (load-time rebuild would fix
+     * them too, but stats must update immediately). Returns the record's
+     * new correct value, or null when the record no longer exists.
+     */
+    fun overturnAnswer(answerId: String, newCorrect: Boolean): Boolean? {
+        var flipped = false
+        var result: Boolean? = null
+        synchronized(lock) {
+            val st = activeState()
+            val idx = st.answers.indexOfFirst { it.id == answerId }
+            if (idx >= 0) {
+                val old = st.answers[idx]
+                if (old.correct != newCorrect) {
+                    val q = st.byId[old.questionId]
+                    st.answers[idx] = old.copy(correct = newCorrect)
+                    if (q != null) for (path in q.domains) {
+                        val s = st.domainStats[path] ?: continue
+                        st.domainStats[path] = s.copy(
+                            correct = (s.correct + if (newCorrect) 1 else -1).coerceAtLeast(0)
+                        )
+                    }
+                    flipped = true
+                }
+                result = newCorrect
+            }
+        }
+        if (flipped) {
+            bump()
+            persistImmediately()
+        }
+        return result
+    }
+
     fun replaceSummaries(newSummaries: List<KnowledgeSummary>) {
         synchronized(lock) {
             val st = activeState()
@@ -499,6 +559,7 @@ class QuestionStore(
         put("rejectPile", JSONArray().apply { st.rejectedPile.forEach { put(it.toJson()) } })
         st.rejectionNotes?.let { put("rejectNotes", it) }
         put("rejectNotesStamp", st.rejectionNotesStamp)
+        put("gradingLessons", JSONArray(st.gradingLessons))
     }
 
     private fun writePayload(netId: String, payload: JSONObject) {
@@ -572,6 +633,8 @@ class QuestionStore(
             }
             st.rejectionNotes = root.optString("rejectNotes").ifBlank { null }
             st.rejectionNotesStamp = root.optString("rejectNotesStamp")
+            val gl = root.optJSONArray("gradingLessons")
+            if (gl != null) for (i in 0 until gl.length()) st.gradingLessons.add(gl.optString(i))
             Log.i(TAG, "net $netId: loaded ${st.questions.size} questions, ${st.answers.size} answers")
         } catch (e: Exception) {
             Log.e(TAG, "net $netId load failed — starting empty", e)

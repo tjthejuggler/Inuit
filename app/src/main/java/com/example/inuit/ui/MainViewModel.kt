@@ -17,6 +17,7 @@ import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionSelector
 import com.example.inuit.data.QuestionType
 import com.example.inuit.data.StatsCalculator
+import com.example.inuit.data.gen.GradingReviewer
 import com.example.inuit.data.llm.LlmConfig
 import com.example.inuit.data.llm.McpClient
 import com.example.inuit.data.llm.McpConfig
@@ -58,8 +59,26 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         /** The full question prompt — shown when the banner is tapped. */
         val prompt: String,
         /** What the user actually chose/typed, readable (MC choice text). */
-        val userAnswer: String
+        val userAnswer: String,
+        /** For the dispute flow: the raw stored answer + record/question ids. */
+        val rawAnswer: String = "",
+        val answerRecordId: String? = null,
+        val questionId: String? = null
     )
+
+    /** UI state of the dispute ("scored in error") flow for the current flash. */
+    sealed interface ReviewState {
+        data object Idle : ReviewState
+        data object Running : ReviewState
+        /** The LLM sided with the user — record, stats and flash flipped. */
+        data class Overturned(val lesson: String?) : ReviewState
+        /** The LLM upheld the original grading; lesson (if any) was learned. */
+        data class Upheld(val lesson: String?) : ReviewState
+        data class Failed(val message: String) : ReviewState
+    }
+
+    private val _reviewState = MutableStateFlow<ReviewState>(ReviewState.Idle)
+    val reviewState: StateFlow<ReviewState> = _reviewState.asStateFlow()
 
     private val _lastFlash = MutableStateFlow<AnswerFlash?>(null)
 
@@ -184,14 +203,69 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         val q = _currentQuestion.value ?: return
         if (q.id != questionId) return
         val correct = Grader.grade(q, raw)
-        _lastFlash.value = AnswerFlash(correct, q.correctAnswerDisplay, q.prompt, userAnswerDisplay(q, raw))
         statsEpoch.value = statsEpoch.value + 1L
         val record = store.recordAnswer(q.id, correct, raw, elapsedMs)
+        _lastFlash.value = AnswerFlash(
+            correct, q.correctAnswerDisplay, q.prompt, userAnswerDisplay(q, raw),
+            rawAnswer = raw,
+            answerRecordId = record?.id,
+            questionId = q.id
+        )
+        _reviewState.value = ReviewState.Idle
         // Every persisted answer ticks the connected Tail habit by +1, stamped
         // at the exact answer time so Tail's schedule timeline is accurate.
         if (record != null) graph.tail.sendQuestionsIncrement(record.timestamp)
         graph.generator.maybeGenerate()
         pickNext()
+    }
+
+    /**
+     * The user disputes the last answer's grading: the net's LLM
+     * re-adjudicates. If it sides with the user, the answer record, domain
+     * stats, live stats snapshot and the flash itself flip to correct.
+     * Either way, when the dispute exposed a question-design flaw the model
+     * returns ONE generalized rule (no examples) that is stored as a
+     * per-net grading lesson and fed into future generation prompts.
+     */
+    fun requestReview() {
+        val flash = _lastFlash.value ?: return
+        val recordId = flash.answerRecordId ?: return
+        val questionId = flash.questionId ?: return
+        if (_reviewState.value is ReviewState.Running) return
+        _reviewState.value = ReviewState.Running
+        viewModelScope.launch {
+            try {
+                val s = graph.settingsStore.current()
+                if (!s.llmConfigured) {
+                    _reviewState.value = ReviewState.Failed("LLM not configured")
+                    return@launch
+                }
+                val q = store.questionById(questionId)
+                    ?: throw IllegalStateException("question no longer exists")
+                val verdict = withContext(Dispatchers.IO) {
+                    GradingReviewer.review(
+                        graph.llm,
+                        LlmConfig(s.baseUrl, s.apiKey, s.model),
+                        q, flash.rawAnswer, flash.correct
+                    )
+                }
+                if (verdict.lesson.isNotEmpty()) {
+                    store.addGradingLessonFor(graph.netStore.active().id, verdict.lesson)
+                }
+                if (verdict.userWasCorrect == flash.correct) {
+                    // LLM agrees with the original grade — nothing flips.
+                    _reviewState.value = ReviewState.Upheld(verdict.lesson.takeIf { it.isNotEmpty() })
+                } else {
+                    store.overturnAnswer(recordId, verdict.userWasCorrect)
+                    _lastFlash.value = flash.copy(correct = verdict.userWasCorrect)
+                    statsEpoch.value = statsEpoch.value + 1L
+                    _reviewState.value = ReviewState.Overturned(verdict.lesson.takeIf { it.isNotEmpty() })
+                }
+            } catch (e: Exception) {
+                DebugLog.e("Review", "grading review failed", e)
+                _reviewState.value = ReviewState.Failed(e.message ?: e.javaClass.simpleName)
+            }
+        }
     }
 
     /** Skip = REJECT: the question is permanently retired from the queue and

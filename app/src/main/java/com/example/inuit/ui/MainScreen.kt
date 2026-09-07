@@ -80,6 +80,7 @@ fun MainScreen(
     val podcastLoading by viewModel.podcastLoading.collectAsStateWithLifecycle()
     val podcastHistory by viewModel.podcastHistory.collectAsStateWithLifecycle()
     val lastFlash by viewModel.lastFlash.collectAsStateWithLifecycle()
+    val reviewState by viewModel.reviewState.collectAsStateWithLifecycle()
 
     // Domain-tree leaf drill-down: the path and its Question History list.
     var historyDomain by remember { mutableStateOf<String?>(null) }
@@ -154,7 +155,7 @@ fun MainScreen(
                         // correct answer, shown until the next submit/skip.
                         lastFlash?.let { flash ->
                             Spacer(Modifier.height(6.dp))
-                            AnswerFlashBanner(flash)
+                            AnswerFlashBanner(flash, reviewState, viewModel::requestReview)
                         }
                         // Generation progress / errors sit below the question.
                         if (genState is GenState.Running || genState is GenState.Error) {
