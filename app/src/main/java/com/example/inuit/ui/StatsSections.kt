@@ -89,8 +89,15 @@ fun StatsPanel(
 private fun OverviewChips(stats: StatsCalculator.Snapshot, liveQueueSize: Int) {
     Column {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            StatChip("Answered", "${stats.totalAnswers}", Modifier.weight(1f))
-            StatChip("Accuracy", "${(stats.accuracy * 100).toInt()}%", Modifier.weight(1f))
+            StatChip(
+                "Answered", "${stats.totalAnswers}", Modifier.weight(1f),
+                today = "${stats.answeredToday}"
+            )
+            StatChip(
+                "Accuracy", "${(stats.accuracy * 100).toInt()}%", Modifier.weight(1f),
+                today = if (stats.answeredToday == 0) "—"
+                else "${(stats.accuracyToday * 100).toInt()}%"
+            )
             StatChip(
                 "Day streak", "${stats.dayStreak}", Modifier.weight(1f),
                 highlight = stats.dayStreak >= 3
@@ -98,9 +105,18 @@ private fun OverviewChips(stats: StatsCalculator.Snapshot, liveQueueSize: Int) {
         }
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            StatChip("Realms", "${stats.domainsExplored}", Modifier.weight(1f))
-            StatChip("Topics", "${stats.distinctDomains}", Modifier.weight(1f))
-            StatChip("Queue", "$liveQueueSize", Modifier.weight(1f))
+            StatChip(
+                "Realms", "${stats.domainsExplored}", Modifier.weight(1f),
+                today = "${stats.realmsToday}"
+            )
+            StatChip(
+                "Topics", "${stats.distinctDomains}", Modifier.weight(1f),
+                today = "${stats.topicsToday}"
+            )
+            StatChip(
+                "Queue", "$liveQueueSize", Modifier.weight(1f),
+                today = "${stats.queuedToday}"
+            )
         }
         Spacer(Modifier.height(4.dp))
         Text(
@@ -117,7 +133,9 @@ private fun StatChip(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
-    highlight: Boolean = false
+    highlight: Boolean = false,
+    /** Today's number shown before a small dot and the all-time value. */
+    today: String? = null
 ) {
     Column(
         modifier
@@ -129,13 +147,32 @@ private fun StatChip(
             .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            value,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (today != null) {
+                Text(
+                    today,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(3.dp))
+                Box(
+                    Modifier
+                        .size(3.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant)
+                )
+                Spacer(Modifier.width(3.dp))
+            }
+            Text(
+                value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+            )
+        }
         Text(
             label.uppercase(),
             style = MaterialTheme.typography.labelSmall,

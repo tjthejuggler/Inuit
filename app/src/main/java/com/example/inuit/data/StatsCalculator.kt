@@ -56,6 +56,17 @@ object StatsCalculator {
         val totalAnswers: Int,
         val totalCorrect: Int,
         val accuracy: Float,
+        /** Answers given today (system zone). */
+        val answeredToday: Int = 0,
+        /** Correct answers today; accuracyToday is 0 when answeredToday is 0. */
+        val correctToday: Int = 0,
+        val accuracyToday: Float = 0f,
+        /** Distinct top-level realms touched by today's answers. */
+        val realmsToday: Int = 0,
+        /** Distinct full domain paths touched by today's answers. */
+        val topicsToday: Int = 0,
+        /** Questions generated today (all-time counterpart is the live queue size). */
+        val queuedToday: Int = 0,
         /** Consecutive calendar days with ≥1 answer, ending today (or yesterday
          *  when today has no answers yet — the streak survives until the user
          *  answers again today). */
@@ -211,6 +222,20 @@ object StatsCalculator {
         val sharpestBand = qualified.maxByOrNull { it.accuracy }
         val weakestBand = qualified.minByOrNull { it.accuracy }
 
+        // today-scoped numbers for the overview chips
+        val todayAnswers = answers.filter {
+            Instant.ofEpochMilli(it.timestamp).atZone(zone).toLocalDate() == today
+        }
+        val answeredToday = todayAnswers.size
+        val correctToday = todayAnswers.count { it.correct }
+        val realmsToday = todayAnswers.mapNotNull { byId[it.questionId]?.domains?.firstOrNull() }
+            .map { topKey(it, netName) }.toSet().size
+        val topicsToday = todayAnswers.flatMap { byId[it.questionId]?.domains ?: emptyList() }
+            .toSet().size
+        val queuedToday = questions.count {
+            Instant.ofEpochMilli(it.createdAt).atZone(zone).toLocalDate() == today
+        }
+
         // knowledge-space growth: cumulative distinct top-level domains over the 14-day window
         val seen = HashSet<String>()
         val answersByDay = answers.groupBy {
@@ -227,6 +252,12 @@ object StatsCalculator {
             totalAnswers = total,
             totalCorrect = correctTotal,
             accuracy = if (total == 0) 0f else correctTotal.toFloat() / total,
+            answeredToday = answeredToday,
+            correctToday = correctToday,
+            accuracyToday = if (answeredToday == 0) 0f else correctToday.toFloat() / answeredToday,
+            realmsToday = realmsToday,
+            topicsToday = topicsToday,
+            queuedToday = queuedToday,
             dayStreak = dayStreak,
             domainsExplored = topAgg.size,
             distinctDomains = domainStats.map { it.path }.distinct().size,
