@@ -324,6 +324,9 @@ fun SettingsScreen(
             // ── Tail app ──────────────────────────────────────────────────
             TailSettingsSection(viewModel)
 
+            // ── Google Drive documents ────────────────────────────────────
+            GDriveSettingsSection(viewModel)
+
             // ── Diagnostics ───────────────────────────────────────────────
             DiagnosticsCard()
         }

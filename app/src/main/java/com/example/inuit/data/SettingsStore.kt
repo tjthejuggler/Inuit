@@ -50,9 +50,18 @@ data class AppSettings(
     val harvestEnabled: Boolean = true,
     val mcpJson: String = DEFAULT_MCP_JSON,
     /** Package of the podcast app that opens recommendations; blank = system default. */
-    val podcastAppPackage: String = ""
+    val podcastAppPackage: String = "",
+    /** Google Drive OAuth credentials for the Gemini-export document source. */
+    val gdriveClientId: String = "",
+    val gdriveClientSecret: String = "",
+    val gdriveRefreshToken: String = ""
 ) {
     val llmConfigured: Boolean get() = baseUrl.isNotBlank() && model.isNotBlank()
+
+    /** Drive source ready when all three OAuth values are present. */
+    val gdriveConfigured: Boolean
+        get() = gdriveClientId.isNotBlank() &&
+            gdriveClientSecret.isNotBlank() && gdriveRefreshToken.isNotBlank()
 }
 
 class SettingsStore(private val context: Context) {
@@ -71,6 +80,9 @@ class SettingsStore(private val context: Context) {
         val HARVEST = booleanPreferencesKey("gen_harvest")
         val MCP_JSON = stringPreferencesKey("mcp_json")
         val PODCAST_APP = stringPreferencesKey("podcast_app_package")
+        val GDRIVE_CLIENT_ID = stringPreferencesKey("gdrive_client_id")
+        val GDRIVE_CLIENT_SECRET = stringPreferencesKey("gdrive_client_secret")
+        val GDRIVE_REFRESH_TOKEN = stringPreferencesKey("gdrive_refresh_token")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -87,7 +99,10 @@ class SettingsStore(private val context: Context) {
             mcpBudget = (p[K.MCP_BUDGET] ?: 3).coerceIn(0, 20),
             harvestEnabled = p[K.HARVEST] ?: true,
             mcpJson = p[K.MCP_JSON] ?: DEFAULT_MCP_JSON,
-            podcastAppPackage = p[K.PODCAST_APP] ?: ""
+            podcastAppPackage = p[K.PODCAST_APP] ?: "",
+            gdriveClientId = p[K.GDRIVE_CLIENT_ID] ?: "",
+            gdriveClientSecret = p[K.GDRIVE_CLIENT_SECRET] ?: "",
+            gdriveRefreshToken = p[K.GDRIVE_REFRESH_TOKEN] ?: ""
         )
     }
 
@@ -130,5 +145,13 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setPodcastApp(pkg: String) {
         context.dataStore.edit { it[K.PODCAST_APP] = pkg.trim() }
+    }
+
+    suspend fun saveGdrive(clientId: String, clientSecret: String, refreshToken: String) {
+        context.dataStore.edit {
+            it[K.GDRIVE_CLIENT_ID] = clientId.trim()
+            it[K.GDRIVE_CLIENT_SECRET] = clientSecret.trim()
+            it[K.GDRIVE_REFRESH_TOKEN] = refreshToken.trim()
+        }
     }
 }

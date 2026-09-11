@@ -29,9 +29,22 @@ object Http {
         body: String,
         connectTimeoutMs: Int = 20_000,
         readTimeoutMs: Int = 300_000,
-        totalTimeoutMs: Long = 420_000
+        totalTimeoutMs: Long = 420_000,
+        contentType: String = "application/json"
     ): HttpResponse = withContext(Dispatchers.IO) {
-        request("POST", url, headers, body, connectTimeoutMs, readTimeoutMs, totalTimeoutMs)
+        request("POST", url, headers, body, connectTimeoutMs, readTimeoutMs, totalTimeoutMs, contentType)
+    }
+
+    /** PATCH — used by the Drive client to rename/move files (files.update). */
+    suspend fun patch(
+        url: String,
+        headers: Map<String, String>,
+        body: String,
+        connectTimeoutMs: Int = 20_000,
+        readTimeoutMs: Int = 60_000,
+        totalTimeoutMs: Long = 180_000
+    ): HttpResponse = withContext(Dispatchers.IO) {
+        request("PATCH", url, headers, body, connectTimeoutMs, readTimeoutMs, totalTimeoutMs)
     }
 
     suspend fun get(
@@ -107,7 +120,8 @@ object Http {
         body: String?,
         connectTimeoutMs: Int,
         readTimeoutMs: Int,
-        totalTimeoutMs: Long
+        totalTimeoutMs: Long,
+        contentType: String = "application/json"
     ): HttpResponse {
         val conn = URL(url).openConnection() as HttpURLConnection
         val deadline = watchdog.schedule({ conn.disconnect() }, totalTimeoutMs, TimeUnit.MILLISECONDS)
@@ -119,7 +133,7 @@ object Http {
             for ((k, v) in headers) conn.setRequestProperty(k, v)
             if (body != null) {
                 conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Content-Type", contentType)
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             }
             val code = conn.responseCode

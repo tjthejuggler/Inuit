@@ -17,6 +17,8 @@ import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionSelector
 import com.example.inuit.data.QuestionType
 import com.example.inuit.data.StatsCalculator
+import com.example.inuit.data.gdrive.GDriveClient
+import com.example.inuit.data.gdrive.GDriveCredentials
 import com.example.inuit.data.gen.GradingReviewer
 import com.example.inuit.data.llm.LlmConfig
 import com.example.inuit.data.llm.McpClient
@@ -399,6 +401,57 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     fun saveMcpJson(json: String) {
         viewModelScope.launch { graph.settingsStore.saveMcpJson(json) }
     }
+
+    // ── Google Drive document source (Gemini chat exports) ───────────────
+
+    /** UI state for the Settings → Google Drive section. */
+    data class GDriveUiState(
+        val isTesting: Boolean = false,
+        val testMessage: String? = null,
+        val testOk: Boolean = false,
+        val isSyncing: Boolean = false,
+        val syncMessage: String? = null
+    )
+
+    private val _gdriveState = MutableStateFlow(GDriveUiState())
+    val gdriveState: StateFlow<GDriveUiState> = _gdriveState.asStateFlow()
+
+    fun saveGdriveCredentials(clientId: String, clientSecret: String, refreshToken: String) {
+        viewModelScope.launch {
+            graph.settingsStore.saveGdrive(clientId, clientSecret, refreshToken)
+        }
+    }
+
+    /** Verifies the stored credentials with a live Drive "about" call. */
+    fun testGdrive(clientId: String, clientSecret: String, refreshToken: String) {
+        viewModelScope.launch {
+            _gdriveState.value = GDriveUiState(isTesting = true)
+            _gdriveState.value = try {
+                val creds = GDriveCredentials(clientId.trim(), clientSecret.trim(), refreshToken.trim())
+                val who = GDriveClient(creds).testAbout()
+                GDriveUiState(testOk = true, testMessage = "Connected as $who")
+            } catch (e: Exception) {
+                GDriveUiState(testOk = false, testMessage = e.message ?: "connection failed")
+            }
+        }
+    }
+
+    /** Manual "Sync now": scan Drive root, ingest Gemini exports, archive the rest. */
+    fun syncGdriveNow() {
+        if (_gdriveState.value.isSyncing) return
+        viewModelScope.launch {
+            _gdriveState.update { it.copy(isSyncing = true, syncMessage = null) }
+            val msg = try {
+                graph.runGDriveSync() ?: "Add your Google Drive credentials first."
+            } catch (e: Exception) {
+                "Sync failed: ${e.message}"
+            }
+            _gdriveState.update { it.copy(isSyncing = false, syncMessage = msg) }
+        }
+    }
+
+    /** How many distilled Drive documents are in the fact pool (info only). */
+    fun gdriveFactCount(): Int = graph.gdriveFacts.size()
 
     // ── podcast recommendations ──────────────────────────────────────────
 

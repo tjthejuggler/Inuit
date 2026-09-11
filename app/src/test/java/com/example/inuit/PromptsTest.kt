@@ -90,6 +90,46 @@ class PromptsTest {
     }
 
     @Test
+    fun `drive notes render their target and scope guard when weighted`() {
+        val net = Net(
+            name = "Physics",
+            gdriveEnabled = true,
+            sourceWeights = mapOf(
+                com.example.inuit.data.SourceMix.GDRIVE to 20,
+                com.example.inuit.data.SourceMix.LOCATION to 10
+            )
+        )
+        val out = Prompts.userRequest(
+            context(emptyList()),
+            batchSize = 10,
+            net = net,
+            accents = NetAccents(
+                locationLine = "the user is currently near Milan, Italy",
+                gdriveLines = listOf("- DOC \"Conversation with Gemini 1\": Hawking radiation is real")
+            )
+        )
+        assertTrue(out.contains("DRIVE NOTES"))
+        assertTrue(out.contains("2 drawing on the DRIVE NOTES"))
+        assertTrue(out.contains("Hawking radiation is real"))
+        assertTrue(out.contains("1 tied to the LOCATION below"))
+    }
+
+    @Test
+    fun `drive notes are omitted when the pool is empty or the weight is zero`() {
+        val weighted = Net(name = "P", gdriveEnabled = true, sourceWeights = mapOf(com.example.inuit.data.SourceMix.GDRIVE to 20))
+        val emptyPool = Prompts.userRequest(
+            context(emptyList()), batchSize = 10, net = weighted, accents = NetAccents()
+        )
+        assertFalse(emptyPool.contains("DRIVE NOTES"))
+        val unweighted = Net(name = "Q")
+        val noWeight = Prompts.userRequest(
+            context(emptyList()), batchSize = 10, net = unweighted,
+            accents = NetAccents(gdriveLines = listOf("- DOC \"x\": y"))
+        )
+        assertFalse(noWeight.contains("DRIVE NOTES"))
+    }
+
+    @Test
     fun `user request omits source mix when no accent has weight or data`() {
         val net = Net(name = "Plain", description = "Nothing extra")
         val out = Prompts.userRequest(context(challenge = emptyList()), batchSize = 10, net = net)

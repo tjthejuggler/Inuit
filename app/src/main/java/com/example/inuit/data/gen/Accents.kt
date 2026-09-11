@@ -45,11 +45,15 @@ data class NetAccents(
     /** Life-log seeds: the user's own recent Tail text entries, one compact
      *  line per habit (see [TailTextAccents]). Empty when the net has the
      *  accent off, nothing is shared, or Tail is unavailable. */
-    val tailTextLines: List<String> = emptyList()
+    val tailTextLines: List<String> = emptyList(),
+    /** Distilled facts from Gemini-chat exports in the user's Drive root
+     *  (see [com.example.inuit.data.gdrive.GDriveFactStore]). Empty when the
+     *  net has the accent off or nothing has been ingested yet. */
+    val gdriveLines: List<String> = emptyList()
 ) {
     val isEmpty: Boolean
         get() = locationLine == null && dateLines.isEmpty() &&
-            crossNetLines.isEmpty() && tailTextLines.isEmpty()
+            crossNetLines.isEmpty() && tailTextLines.isEmpty() && gdriveLines.isEmpty()
 }
 
 // ── Date accent (pure — unit tested) ──────────────────────────────────────
@@ -323,7 +327,9 @@ class AccentsBuilder(
     private val netStore: NetStore,
     private val store: QuestionStore,
     /** Tail bridge; null keeps the life-log accent permanently off. */
-    private val tail: TailIntegration? = null
+    private val tail: TailIntegration? = null,
+    /** Drive-doc fact pool; null keeps the Drive accent permanently off. */
+    private val gdriveFacts: com.example.inuit.data.gdrive.GDriveFactStore? = null
 ) {
 
     suspend fun build(net: Net): NetAccents {
@@ -339,7 +345,9 @@ class AccentsBuilder(
             if (mix.getValue(SourceMix.CROSS_NET) > 0 && net.sourceNetIds.isNotEmpty()) crossNetLines(net) else emptyList()
         val tailTextLines =
             if (mix.getValue(SourceMix.TAIL_TEXT) > 0 && net.tailTextHabits.isNotEmpty()) tailTextLines(net) else emptyList()
-        return NetAccents(locationLine, dateLines, crossNetLines, tailTextLines)
+        val gdriveLines =
+            if (mix.getValue(SourceMix.GDRIVE) > 0) gdriveFacts?.accentLines() ?: emptyList() else emptyList()
+        return NetAccents(locationLine, dateLines, crossNetLines, tailTextLines, gdriveLines)
     }
 
     /**

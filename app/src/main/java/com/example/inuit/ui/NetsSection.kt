@@ -240,6 +240,7 @@ private fun NetEditDialog(
     var wDate by rememberSaveable { mutableStateOf(initialMix[SourceMix.DATE] ?: 0) }
     var wCrossNet by rememberSaveable { mutableStateOf(initialMix[SourceMix.CROSS_NET] ?: 0) }
     var wTailText by rememberSaveable { mutableStateOf(initialMix[SourceMix.TAIL_TEXT] ?: 0) }
+    var wGdrive by rememberSaveable { mutableStateOf(initialMix[SourceMix.GDRIVE] ?: 0) }
     // Custom sources: label + guidance + own weight. Plain remember (not
     // saveable) — CustomSource isn't Bundle-saveable; losing an in-progress
     // dialog on process death is acceptable.
@@ -279,7 +280,7 @@ private fun NetEditDialog(
 
     /** Sum of all accent weights except the given custom source. */
     fun othersSum(excludeCustomId: String? = null): Int =
-        wLocation + wDate + wCrossNet + wTailText +
+        wLocation + wDate + wCrossNet + wTailText + wGdrive +
             customs.filter { it.id != excludeCustomId }.sumOf { customWeights[it.id] ?: 0 }
 
     fun toggleSource(id: String) {
@@ -401,7 +402,7 @@ private fun NetEditDialog(
                     Slider(
                         value = wLocation.toFloat(),
                         onValueChange = { raw ->
-                            val snapped = snapAccent(raw, wDate + wCrossNet + wTailText)
+                            val snapped = snapAccent(raw, wDate + wCrossNet + wTailText + wGdrive)
                             if (snapped > 0 && wLocation == 0) {
                                 // flipping on — make sure the permission is there
                                 if (ContextCompat.checkSelfPermission(
@@ -447,7 +448,7 @@ private fun NetEditDialog(
                     Slider(
                         value = wDate.toFloat(),
                         onValueChange = { raw ->
-                            wDate = snapAccent(raw, wLocation + wCrossNet + wTailText)
+                            wDate = snapAccent(raw, wLocation + wCrossNet + wTailText + wGdrive)
                         },
                         valueRange = 0f..100f,
                         steps = 19,
@@ -476,7 +477,7 @@ private fun NetEditDialog(
                     Slider(
                         value = wCrossNet.toFloat(),
                         onValueChange = { raw ->
-                            wCrossNet = snapAccent(raw, wLocation + wDate + wTailText)
+                            wCrossNet = snapAccent(raw, wLocation + wDate + wTailText + wGdrive)
                         },
                         valueRange = 0f..100f,
                         steps = 19,
@@ -505,7 +506,37 @@ private fun NetEditDialog(
                     Slider(
                         value = wTailText.toFloat(),
                         onValueChange = { raw ->
-                            wTailText = snapAccent(raw, wLocation + wDate + wCrossNet)
+                            wTailText = snapAccent(raw, wLocation + wDate + wCrossNet + wGdrive)
+                        },
+                        valueRange = 0f..100f,
+                        steps = 19,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp)
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .padding(vertical = 2.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Drive documents", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Questions from key facts in the Gemini chat exports " +
+                                "saved to your Google Drive root " +
+                                "(needs Drive credentials in Settings)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text("$wGdrive%", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = wGdrive.toFloat(),
+                        onValueChange = { raw ->
+                            wGdrive = snapAccent(raw, wLocation + wDate + wCrossNet + wTailText)
                         },
                         valueRange = 0f..100f,
                         steps = 19,
@@ -668,6 +699,7 @@ private fun NetEditDialog(
                         locationEnabled = wLocation > 0,
                         dateEnabled = wDate > 0,
                         tailTextEnabled = wTailText > 0,
+                        gdriveEnabled = wGdrive > 0,
                         tailTextHabits = selectedTailHabits,
                         sourceNetIds = selectedSources,
                         sourceWeights = SourceMix.normalize(
@@ -676,6 +708,7 @@ private fun NetEditDialog(
                                 put(SourceMix.DATE, wDate)
                                 put(SourceMix.CROSS_NET, wCrossNet)
                                 put(SourceMix.TAIL_TEXT, wTailText)
+                                put(SourceMix.GDRIVE, wGdrive)
                                 customs.forEach { put(SourceMix.customKey(it.id), customWeights[it.id] ?: 0) }
                             }
                         ),

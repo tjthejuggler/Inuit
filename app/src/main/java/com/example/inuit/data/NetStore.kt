@@ -42,6 +42,9 @@ data class Net(
      *  a net never sources itself. */
     val sourceNetIds: List<String> = emptyList(),
     val tailTextEnabled: Boolean = false,
+    /** Gemini-chat-export documents pulled from the user's Google Drive
+     *  root (kept in sync by [com.example.inuit.data.gdrive.GDriveSync]). */
+    val gdriveEnabled: Boolean = false,
     /** Which Tail text-input habits this net may draw from — a per-net
      *  subset of the habits Tail itself is willing to share. */
     val tailTextHabits: List<String> = emptyList(),
@@ -61,7 +64,10 @@ data class Net(
     /** The normalized per-source distribution actually used by generation. */
     fun mix(): Map<String, Int> =
         if (sourceWeights.isEmpty() && customSources.isEmpty())
-            SourceMix.legacy(locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(), tailTextEnabled)
+            SourceMix.legacy(
+                locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(),
+                tailTextEnabled, gdriveEnabled
+            )
         else SourceMix.normalize(sourceWeights)
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -73,6 +79,7 @@ data class Net(
         put("date", dateEnabled)
         put("srcNets", JSONArray(sourceNetIds))
         put("tailText", tailTextEnabled)
+        put("gdrive", gdriveEnabled)
         put("tailHabits", JSONArray(tailTextHabits))
         put("mix", JSONObject(mix()))
         put("customSrcs", JSONArray(customSources.map { it.toJson() }))
@@ -90,6 +97,7 @@ data class Net(
             val dateEnabled = o.optBoolean("date", false)
             val sourceNetIds = o.optJSONArray("srcNets").toStringList().filter { it.isNotBlank() }
             val tailTextEnabled = o.optBoolean("tailText", false)
+            val gdriveEnabled = o.optBoolean("gdrive", false)
             // Mix migration: nets saved before source mixes existed keep
             // working — their accent toggles become small legacy shares.
             val mixObj = o.optJSONObject("mix")
@@ -110,9 +118,13 @@ data class Net(
                 dateEnabled = dateEnabled,
                 sourceNetIds = sourceNetIds,
                 tailTextEnabled = tailTextEnabled,
+                gdriveEnabled = gdriveEnabled,
                 tailTextHabits = o.optJSONArray("tailHabits").toStringList().filter { it.isNotBlank() }.distinct(),
                 sourceWeights = weights
-                    ?: SourceMix.legacy(locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(), tailTextEnabled),
+                    ?: SourceMix.legacy(
+                        locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(),
+                        tailTextEnabled, gdriveEnabled
+                    ),
                 customSources = customs,
                 createdAt = o.optLong("ts", 0L)
             )
@@ -160,8 +172,10 @@ object SourceMix {
     const val CROSS_NET = "crossNet"
     /** Questions inspired by the user's Tail life-log entries. */
     const val TAIL_TEXT = "tailText"
+    /** Questions anchored in distilled Google Drive Gemini-chat documents. */
+    const val GDRIVE = "gdrive"
 
-    val ACCENTS = listOf(LOCATION, DATE, CROSS_NET, TAIL_TEXT)
+    val ACCENTS = listOf(LOCATION, DATE, CROSS_NET, TAIL_TEXT, GDRIVE)
 
     /** Accents combined can never fully take over a net — core keeps a floor. */
     const val MAX_TOTAL_ACCENTS = 80
@@ -198,13 +212,15 @@ object SourceMix {
         location: Boolean,
         date: Boolean,
         crossNet: Boolean,
-        tailText: Boolean
+        tailText: Boolean,
+        gdrive: Boolean = false
     ): Map<String, Int> = normalize(
         buildMap {
             if (location) put(LOCATION, LEGACY_ACCENT_PERCENT)
             if (date) put(DATE, LEGACY_ACCENT_PERCENT)
             if (crossNet) put(CROSS_NET, LEGACY_ACCENT_PERCENT)
             if (tailText) put(TAIL_TEXT, LEGACY_ACCENT_PERCENT)
+            if (gdrive) put(GDRIVE, LEGACY_ACCENT_PERCENT)
         }
     )
 }
@@ -332,6 +348,7 @@ class NetStore(
                         dateEnabled = net.dateEnabled,
                         sourceNetIds = sources,
                         tailTextEnabled = net.tailTextEnabled,
+                        gdriveEnabled = net.gdriveEnabled,
                         tailTextHabits = net.tailTextHabits.distinct(),
                         sourceWeights = net.mix(),
                         customSources = net.customSources

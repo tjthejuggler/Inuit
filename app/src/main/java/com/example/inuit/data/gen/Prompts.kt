@@ -179,22 +179,25 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         val dateTarget = if (accents?.dateLines?.isNotEmpty() == true) target(SourceMix.DATE) else 0
         val crossTarget = if (accents?.crossNetLines?.isNotEmpty() == true) target(SourceMix.CROSS_NET) else 0
         val tailTarget = if (accents?.tailTextLines?.isNotEmpty() == true) target(SourceMix.TAIL_TEXT) else 0
+        val gdriveTarget = if (accents?.gdriveLines?.isNotEmpty() == true) target(SourceMix.GDRIVE) else 0
         // Custom sources are always "available" — their guidance is static.
         val customTargets = net?.customSources
             ?.map { it to target(SourceMix.customKey(it.id)) }
             ?.filter { it.second > 0 && it.first.label.isNotBlank() }
             ?: emptyList()
-        val accentTotal = locTarget + dateTarget + crossTarget + tailTarget + customTargets.sumOf { it.second }
+        val accentTotal = locTarget + dateTarget + crossTarget + tailTarget + gdriveTarget +
+            customTargets.sumOf { it.second }
         if (accentTotal > 0) {
             // Null accents can still reach here via custom sources alone.
             val a = accents ?: NetAccents()
             sb.append("\n== QUESTION SOURCE MIX (the user's configured distribution for this net) ==\n")
             sb.append("Of the $batchSize questions, aim for approximately: ")
-            val aims = ArrayList<String>(4)
+            val aims = ArrayList<String>(5)
             if (locTarget > 0) aims.add("$locTarget tied to the LOCATION below")
             if (dateTarget > 0) aims.add("$dateTarget tied to today's DATE")
             if (crossTarget > 0) aims.add("$crossTarget anchored in the OTHER NETS below")
             if (tailTarget > 0) aims.add("$tailTarget inspired by the LIFE-LOG below")
+            if (gdriveTarget > 0) aims.add("$gdriveTarget drawing on the DRIVE NOTES below")
             customTargets.forEach { (src, t) -> aims.add("$t from ${src.label}") }
             sb.append(aims.joinToString(", ")).append("; the remaining ").append(batchSize - accentTotal)
                 .append(" are core questions driven by the rest of this context. ")
@@ -218,9 +221,16 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
                 sb.append("- LIFE-LOG (${tailTarget} question(s); the user's own recent notes from their habit tracker):\n")
                 a.tailTextLines.forEach { sb.append("  ").append(it).append('\n') }
                 sb.append("  → these are personal seeds, NOT quiz material: questions may draw ")
-                .append("light inspiration from them (a topic, entity or theme a note mentions), ")
-                .append("and must still fit this net's scope with a verifiable answer. ")
-                .append("Never quote the notes back and never ask about the user personally.\n")
+                    .append("light inspiration from them (a topic, entity or theme a note mentions), ")
+                    .append("and must still fit this net's scope with a verifiable answer. ")
+                    .append("Never quote the notes back and never ask about the user personally.\n")
+            }
+            if (gdriveTarget > 0) {
+                sb.append("- DRIVE NOTES (${gdriveTarget} question(s); distilled key facts from documents the user saved from their AI chats):\n")
+                a.gdriveLines.forEach { sb.append("  ").append(it).append('\n') }
+                sb.append("  → anchor questions in the facts themselves (entities, numbers, mechanisms), ")
+                    .append("keeping every question inside this net's scope with a verifiable answer. ")
+                    .append("Do not mention the documents or that the material came from notes.\n")
             }
             for ((src, t) in customTargets) {
                 sb.append("- ${src.label} (${t} question(s); the user's own custom direction for this net):\n")
