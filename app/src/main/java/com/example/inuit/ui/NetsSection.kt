@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -27,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,8 +44,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.inuit.data.CustomSource
@@ -234,7 +239,8 @@ private fun NetEditDialog(
     var description by rememberSaveable { mutableStateOf(initial?.description ?: "") }
     var podcastEnabled by rememberSaveable { mutableStateOf(initial?.podcastEnabled ?: true) }
     // Source mix, in percent per accent (core = the remainder). Sliders snap
-    // to steps of 5; combined accents are clamped to MAX_TOTAL_ACCENTS.
+    // to steps of 5; accents may take the whole batch (core may reach 0),
+    // and a raw map summing past 100 is scaled back on save.
     val initialMix = initial?.mix() ?: SourceMix.legacy(false, false, false, false)
     var wLocation by rememberSaveable { mutableStateOf(initialMix[SourceMix.LOCATION] ?: 0) }
     var wDate by rememberSaveable { mutableStateOf(initialMix[SourceMix.DATE] ?: 0) }
@@ -272,16 +278,13 @@ private fun NetEditDialog(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted: Boolean -> if (!granted) wLocation = 0 }
 
-    /** Snap to 5% steps and clamp so combined accents keep core its floor. */
-    fun snapAccent(raw: Float, others: Int): Int {
-        val desired = (raw / 5f).toInt() * 5
-        return desired.coerceIn(0, SourceMix.MAX_TOTAL_ACCENTS - others)
-    }
+    /** Snap to 5% steps; accents share one budget of 100 (validated on save). */
+    fun snapAccent(raw: Float): Int = (raw / 5f).toInt() * 5
 
-    /** Sum of all accent weights except the given custom source. */
-    fun othersSum(excludeCustomId: String? = null): Int =
+    /** Sum of all accent weights — whatever is left of 100 is core. */
+    fun othersSum(): Int =
         wLocation + wDate + wCrossNet + wTailText + wGdrive +
-            customs.filter { it.id != excludeCustomId }.sumOf { customWeights[it.id] ?: 0 }
+            customs.sumOf { customWeights[it.id] ?: 0 }
 
     fun toggleSource(id: String) {
         val current = selectedSources.toMutableList()
@@ -361,8 +364,8 @@ private fun NetEditDialog(
                 )
                 Text(
                     "How each batch's questions are distributed. Core is the net's " +
-                        "own adaptive material; the rest draw on the sources below. " +
-                        "Accents combined can take at most ${SourceMix.MAX_TOTAL_ACCENTS}%.",
+                        "own adaptive material; the sources below may take the " +
+                        "whole batch. Tap a source's name for an explanation.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -373,14 +376,26 @@ private fun NetEditDialog(
                         .clip(RoundedCornerShape(8.dp))
                         .padding(vertical = 2.dp)
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Core (this net)", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "${(100 - othersSum()).coerceAtLeast(0)}% — adaptive questions from the net's own scope",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
+                    InfoName(
+                        "Core (this net)",
+                        "Adaptive questions chosen from the net's own scope and " +
+                            "spaced-repetition state — whatever the sources below " +
+                            "leave of each batch. It may be 0%.",
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "${(100 - othersSum()).coerceAtLeast(0)}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (othersSum() > 100) {
+                    Text(
+                        "Sources add up to more than 100% — shares are scaled " +
+                            "back on save.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -389,20 +404,17 @@ private fun NetEditDialog(
                         .clip(RoundedCornerShape(8.dp))
                         .padding(vertical = 2.dp)
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Location", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Questions tied to your current region " +
-                                "(needs location permission)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    InfoName(
+                        "Location",
+                        "Questions tied to your current region — city, country, " +
+                            "local topics. Needs location permission.",
+                        modifier = Modifier.weight(1f)
+                    )
                     Text("$wLocation%", style = MaterialTheme.typography.labelMedium)
                     Slider(
                         value = wLocation.toFloat(),
                         onValueChange = { raw ->
-                            val snapped = snapAccent(raw, wDate + wCrossNet + wTailText + wGdrive)
+                            val snapped = snapAccent(raw)
                             if (snapped > 0 && wLocation == 0) {
                                 // flipping on — make sure the permission is there
                                 if (ContextCompat.checkSelfPermission(
@@ -435,20 +447,17 @@ private fun NetEditDialog(
                         .clip(RoundedCornerShape(8.dp))
                         .padding(vertical = 2.dp)
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Date", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Questions tied to today — this date in history, " +
-                                "this year in past centuries",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    InfoName(
+                        "Date",
+                        "Questions tied to today — this date in history, " +
+                            "anniversaries, this year in past centuries.",
+                        modifier = Modifier.weight(1f)
+                    )
                     Text("$wDate%", style = MaterialTheme.typography.labelMedium)
                     Slider(
                         value = wDate.toFloat(),
                         onValueChange = { raw ->
-                            wDate = snapAccent(raw, wLocation + wCrossNet + wTailText + wGdrive)
+                            wDate = snapAccent(raw)
                         },
                         valueRange = 0f..100f,
                         steps = 19,
@@ -464,20 +473,17 @@ private fun NetEditDialog(
                         .clip(RoundedCornerShape(8.dp))
                         .padding(vertical = 2.dp)
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Other nets", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Questions anchored in what you know from the source " +
-                                "nets picked below — still inside this net's scope",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    InfoName(
+                        "Other nets",
+                        "Questions anchored in what you know from the source " +
+                            "nets picked below — still inside this net's scope.",
+                        modifier = Modifier.weight(1f)
+                    )
                     Text("$wCrossNet%", style = MaterialTheme.typography.labelMedium)
                     Slider(
                         value = wCrossNet.toFloat(),
                         onValueChange = { raw ->
-                            wCrossNet = snapAccent(raw, wLocation + wDate + wTailText + wGdrive)
+                            wCrossNet = snapAccent(raw)
                         },
                         valueRange = 0f..100f,
                         steps = 19,
@@ -493,20 +499,17 @@ private fun NetEditDialog(
                         .clip(RoundedCornerShape(8.dp))
                         .padding(vertical = 2.dp)
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Tail life-log", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Questions inspired by your recent Tail notes " +
-                                "(most recent entries only)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    InfoName(
+                        "Tail life-log",
+                        "Questions inspired by your recent Tail life-log notes " +
+                            "(most recent entries only).",
+                        modifier = Modifier.weight(1f)
+                    )
                     Text("$wTailText%", style = MaterialTheme.typography.labelMedium)
                     Slider(
                         value = wTailText.toFloat(),
                         onValueChange = { raw ->
-                            wTailText = snapAccent(raw, wLocation + wDate + wCrossNet + wGdrive)
+                            wTailText = snapAccent(raw)
                         },
                         valueRange = 0f..100f,
                         steps = 19,
@@ -522,21 +525,18 @@ private fun NetEditDialog(
                         .clip(RoundedCornerShape(8.dp))
                         .padding(vertical = 2.dp)
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Drive documents", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Questions from key facts in the Gemini chat exports " +
-                                "saved to your Google Drive root " +
-                                "(needs Drive credentials in Settings)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    InfoName(
+                        "Drive documents",
+                        "Questions from key facts in the Gemini chat exports " +
+                            "saved to your Google Drive root (needs Drive " +
+                            "credentials in Settings).",
+                        modifier = Modifier.weight(1f)
+                    )
                     Text("$wGdrive%", style = MaterialTheme.typography.labelMedium)
                     Slider(
                         value = wGdrive.toFloat(),
                         onValueChange = { raw ->
-                            wGdrive = snapAccent(raw, wLocation + wDate + wCrossNet + wTailText)
+                            wGdrive = snapAccent(raw)
                         },
                         valueRange = 0f..100f,
                         steps = 19,
@@ -556,18 +556,14 @@ private fun NetEditDialog(
                             .padding(vertical = 2.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(src.label, style = MaterialTheme.typography.bodyMedium)
-                                if (src.guidance.isNotBlank()) {
-                                    Text(
-                                        src.guidance,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
+                            InfoName(
+                                src.label,
+                                if (src.guidance.isNotBlank()) src.guidance
+                                else "Your own source — edit it to add guidance the " +
+                                    "generator follows for this source's share of " +
+                                    "each batch.",
+                                modifier = Modifier.weight(1f)
+                            )
                             Text("$w%", style = MaterialTheme.typography.labelMedium)
                             IconButton(
                                 onClick = { editingCustom = src },
@@ -594,7 +590,7 @@ private fun NetEditDialog(
                             value = w.toFloat(),
                             onValueChange = { raw ->
                                 customWeights = HashMap(customWeights).also {
-                                    it[src.id] = snapAccent(raw, othersSum(excludeCustomId = src.id))
+                                    it[src.id] = snapAccent(raw)
                                 }
                             },
                             valueRange = 0f..100f,
@@ -663,18 +659,13 @@ private fun NetEditDialog(
                                 checked = src.id in selectedSources,
                                 onCheckedChange = { toggleSource(src.id) }
                             )
-                            Column {
-                                Text(src.name, style = MaterialTheme.typography.bodySmall)
-                                if (src.description.isNotBlank()) {
-                                    Text(
-                                        src.description,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
+                            InfoName(
+                                src.name,
+                                if (src.description.isNotBlank()) src.description
+                                else "Source net — anchor questions in what you " +
+                                    "know from this net.",
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
                     if (selectedSources.size >= MAX_SOURCE_NETS) {
@@ -818,4 +809,43 @@ private fun CustomSourceDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+/** A source name that opens a small explanatory popup when tapped — keeps
+ *  each mix row to a single uncluttered line. */
+@Composable
+private fun InfoName(
+    name: String,
+    explanation: String,
+    modifier: Modifier = Modifier
+) {
+    var showTip by remember { mutableStateOf(false) }
+    Text(
+        name,
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = FontWeight.Medium,
+        textDecoration = TextDecoration.Underline,
+        modifier = modifier.clickable { showTip = !showTip }
+    )
+    if (showTip) {
+        Popup(
+            alignment = Alignment.BottomStart,
+            onDismissRequest = { showTip = false },
+            properties = PopupProperties(focusable = true)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                tonalElevation = 3.dp,
+                shadowElevation = 6.dp,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.widthIn(max = 280.dp)
+            ) {
+                Text(
+                    explanation,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(10.dp)
+                )
+            }
+        }
+    }
 }

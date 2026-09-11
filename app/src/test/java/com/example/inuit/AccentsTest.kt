@@ -33,7 +33,15 @@ class AccentsTest {
     }
 
     @Test
-    fun `normalize clamps accents combined to the core floor`() {
+    fun `normalize allows accents to take the whole batch`() {
+        val mix = SourceMix.normalize(mapOf(SourceMix.LOCATION to 100))
+        assertEquals(0, mix[SourceMix.CORE])
+        assertEquals(100, mix[SourceMix.LOCATION])
+        assertEquals(100, mix.values.sum())
+    }
+
+    @Test
+    fun `normalize scales accents back only when the raw map exceeds 100`() {
         val mix = SourceMix.normalize(
             mapOf(
                 SourceMix.LOCATION to 60,
@@ -42,9 +50,14 @@ class AccentsTest {
                 SourceMix.TAIL_TEXT to 60
             )
         )
-        assertTrue(mix[SourceMix.CORE]!! >= 100 - SourceMix.MAX_TOTAL_ACCENTS)
         assertEquals(100, mix.values.sum())
         assertTrue(mix.values.all { it >= 0 })
+        // 240 raw scales by 100/240: every accent gets 25, core 0.
+        assertEquals(25, mix[SourceMix.LOCATION])
+        assertEquals(25, mix[SourceMix.DATE])
+        assertEquals(25, mix[SourceMix.CROSS_NET])
+        assertEquals(25, mix[SourceMix.TAIL_TEXT])
+        assertEquals(0, mix[SourceMix.CORE])
     }
 
     @Test

@@ -177,24 +177,23 @@ object SourceMix {
 
     val ACCENTS = listOf(LOCATION, DATE, CROSS_NET, TAIL_TEXT, GDRIVE)
 
-    /** Accents combined can never fully take over a net — core keeps a floor. */
-    const val MAX_TOTAL_ACCENTS = 80
-
     /** Share an accent got when it was a plain on/off toggle (legacy migration). */
     const val LEGACY_ACCENT_PERCENT = 8
 
     /** Weight-map key of a custom source's id. */
     fun customKey(id: String): String = "custom:$id"
 
-    /** Clamps, scales and completes a raw weight map into a full
-     *  core + accents distribution summing to 100. Any key other than
-     *  [CORE] (built-in accents and `custom:<id>` alike) is an accent. */
+    /** Clamps and completes a raw weight map into a full core + accents
+     *  distribution summing to 100. Accents are unlimited — core may shrink
+     *  to 0; only if the raw map sums past 100 are accents scaled back so
+     *  no share goes negative. Any key other than [CORE] (built-in accents
+     *  and `custom:<id>` alike) is an accent. */
     fun normalize(raw: Map<String, Int>): Map<String, Int> {
         var accents = raw.filterKeys { it != CORE }
             .mapValues { (_, v) -> v.coerceIn(0, 100) }
         val total = accents.values.sum()
-        if (total > MAX_TOTAL_ACCENTS) {
-            val scale = MAX_TOTAL_ACCENTS.toDouble() / total
+        if (total > 100) {
+            val scale = 100.0 / total
             accents = accents.mapValues { (_, v) -> Math.round(v * scale).toInt() }
         }
         val out = HashMap<String, Int>()
