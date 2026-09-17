@@ -3,6 +3,7 @@ package com.example.inuit
 import android.content.Context
 import com.example.inuit.data.NetStore
 import com.example.inuit.data.QuestionStore
+import com.example.inuit.data.ReviewQueue
 import com.example.inuit.data.SettingsStore
 import com.example.inuit.data.DebugLog
 import com.example.inuit.data.TailIntegration
@@ -28,6 +29,10 @@ class AppGraph(context: Context) {
     val appContext: Context = context.applicationContext
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settingsStore = SettingsStore(context)
+
+    /** Persisted "scored in error" disputes awaiting an LLM pass. */
+    val reviewQueue = ReviewQueue(context.filesDir)
+
     val netStore = NetStore(context, appScope)
     val store = QuestionStore(context, appScope, netStore)
     val llm = LlmClient()

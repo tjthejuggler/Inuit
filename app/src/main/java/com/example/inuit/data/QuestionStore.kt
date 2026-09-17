@@ -188,6 +188,11 @@ class QuestionStore(
     fun podcastQueue(): List<PodcastRec> = synchronized(lock) { activeState().podcastQueue.toList() }
     fun questionById(id: String): Question? = synchronized(lock) { activeState().byId[id] }
 
+    /** Any net's question by id — the queued-dispute drainer resolves the
+     *  request's question in the REQUEST's net, not the active one. */
+    fun questionByIdFor(netId: String, id: String): Question? =
+        synchronized(lock) { stateFor(netId).byId[id] }
+
     /** Answer count already folded into this net's rolling summaries. */
     fun summarizedAnswers(): Int = synchronized(lock) { activeState().summarizedAnswers }
 
@@ -398,17 +403,22 @@ class QuestionStore(
         persistImmediately()
     }
 
+    fun overturnAnswer(answerId: String, newCorrect: Boolean): Boolean? =
+        overturnAnswerFor(activeId, answerId, newCorrect)
+
     /**
-     * Re-adjudication outcome: flips one answer record's correctness and
-     * adjusts the live domain stats to match (load-time rebuild would fix
-     * them too, but stats must update immediately). Returns the record's
-     * new correct value, or null when the record no longer exists.
+     * Net-scoped re-adjudication outcome: flips one answer record's
+     * correctness and adjusts the live domain stats to match (load-time
+     * rebuild would fix them too, but stats must update immediately).
+     * Returns the record's new correct value, or null when the record no
+     * longer exists. Queued dispute drains call this with the REQUEST's own
+     * net, which may differ from the active one.
      */
-    fun overturnAnswer(answerId: String, newCorrect: Boolean): Boolean? {
+    fun overturnAnswerFor(netId: String, answerId: String, newCorrect: Boolean): Boolean? {
         var flipped = false
         var result: Boolean? = null
         synchronized(lock) {
-            val st = activeState()
+            val st = stateFor(netId)
             val idx = st.answers.indexOfFirst { it.id == answerId }
             if (idx >= 0) {
                 val old = st.answers[idx]

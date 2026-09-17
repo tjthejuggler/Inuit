@@ -145,6 +145,12 @@ private fun AnswerFlashDialog(
                             shape = RoundedCornerShape(12.dp)
                         ) { Text("Scored in error? Submit for review") }
 
+                        is MainViewModel.ReviewState.Queued -> Text(
+                            "Queued — the dispute will be reviewed as soon as the LLM is available",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
                         is MainViewModel.ReviewState.Running -> Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(strokeWidth = 1.6.dp, modifier = Modifier.width(14.dp))
                             Spacer(Modifier.width(8.dp))

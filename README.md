@@ -145,6 +145,23 @@ DataStore preferences for settings — deliberately dependency-light (no Room/KS
 
 ## Changelog
 
+- **2026-09-17** — **"Submit for review" disputes are now queued when they
+  can't run immediately.** Submitting a "scored in error" dispute always
+  persists it into a new FIFO [ReviewQueue](app/src/main/java/com/example/inuit/data/ReviewQueue.kt)
+  (`inuit_review_queue.json`, capped at 20, deduped per answer record)
+  before anything else — so a process kill mid-review or an unconfigured
+  LLM can never lose the request. When the LLM is ready the queue drains
+  instantly (unchanged UX: Running → Overturned/Upheld/Failed); otherwise
+  the banner shows a new "Queued" state and the backlog drains on the next
+  app launch, activity resume, or LLM-settings save. Draining is serialized
+  (one at a time), applies each verdict to the REQUEST's own net (records
+  can be overturned while another net is active), silently applies verdicts
+  for older queued items, keeps failed requests for retry (transient errors
+  back off until the next trigger; a request is dropped after 3 failed
+  attempts or when its question no longer exists), and re-checks LLM
+  configuration between requests. Store gains net-scoped
+  `questionByIdFor`/`overturnAnswerFor`; 7 new unit tests cover the queue's
+  persistence, ordering, dedupe, FIFO cap and attempt tracking.
 - **2026-08-26** — **True/false questions now guarantee a ~50/50 answer
   split.** The generator (batch + web harvest) must emit every true/false
   item as a PAIR of twin statements (`"pair": {"true": ..., "false": ...}`

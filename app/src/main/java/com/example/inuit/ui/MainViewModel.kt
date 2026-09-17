@@ -19,6 +19,8 @@ import com.example.inuit.data.QuestionType
 import com.example.inuit.data.StatsCalculator
 import com.example.inuit.data.gdrive.GDriveClient
 import com.example.inuit.data.gdrive.GDriveCredentials
+import com.example.inuit.data.ReviewQueue
+import com.example.inuit.data.ReviewRequest
 import com.example.inuit.data.gen.GradingReviewer
 import com.example.inuit.data.llm.LlmConfig
 import com.example.inuit.data.llm.McpClient
@@ -72,6 +74,8 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     sealed interface ReviewState {
         data object Idle : ReviewState
         data object Running : ReviewState
+        /** Persisted in the review queue; waits for a configured LLM. */
+        data object Queued : ReviewState
         /** The LLM sided with the user — record, stats and flash flipped. */
         data class Overturned(val lesson: String?) : ReviewState
         /** The LLM upheld the original grading; lesson (if any) was learned. */
@@ -104,6 +108,9 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         }
         // Keep a podcast recommendation ready at the bottom of stats.
         graph.podcasts.ensureRec()
+        // Drain disputes queued while the LLM was unavailable (or the app
+        // was killed mid-review) as early as possible after launch.
+        viewModelScope.launch { drainReviewQueue() }
         // React to net switches: resurface the new net's pending question,
         // unfreeze+recompute stats for it, swap the podcast card, and kick
         // generation when its queue is empty.
@@ -168,6 +175,8 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
         statsEpoch.value = statsEpoch.value + 1L
         // Refresh a stale podcast recommendation (kept until tapped otherwise).
         graph.podcasts.ensureRec()
+        // Retry disputes queued while the LLM was unavailable.
+        viewModelScope.launch { drainReviewQueue() }
     }
 
     /**
@@ -228,45 +237,108 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
      * Either way, when the dispute exposed a question-design flaw the model
      * returns ONE generalized rule (no examples) that is stored as a
      * per-net grading lesson and fed into future generation prompts.
+     *
+     * The dispute is ALWAYS persisted into the [ReviewQueue] first, so a
+     * process kill mid-review or an unconfigured LLM can never lose it.
+     * When the LLM is ready the queue drains immediately (the "Queued"
+     * state is transient); otherwise it drains on the next launch, resume
+     * or LLM-settings save.
      */
     fun requestReview() {
         val flash = _lastFlash.value ?: return
         val recordId = flash.answerRecordId ?: return
         val questionId = flash.questionId ?: return
         if (_reviewState.value is ReviewState.Running) return
-        _reviewState.value = ReviewState.Running
-        viewModelScope.launch {
-            try {
+        graph.reviewQueue.enqueueFront(
+            ReviewRequest(
+                netId = graph.netStore.active().id,
+                answerRecordId = recordId,
+                questionId = questionId,
+                userAnswer = flash.rawAnswer,
+                gradedCorrect = flash.correct
+            )
+        )
+        _reviewState.value = ReviewState.Queued
+        viewModelScope.launch { drainReviewQueue() }
+    }
+
+    /** Serializes drains — one at a time, always on the main dispatcher. */
+    private var drainingReviews = false
+
+    /**
+     * Reviews every queued dispute, newest first, while the LLM stays
+     * configured. Only the request matching the on-screen flash updates
+     * [reviewState]; older queued items apply silently (their records,
+     * stats and lessons still flip). Failed requests stay queued with a
+     * bumped attempt count and are retried on the next trigger — dropped
+     * for good after [ReviewQueue.MAX_ATTEMPTS] tries or when their
+     * question no longer exists.
+     */
+    private suspend fun drainReviewQueue() {
+        if (drainingReviews) return
+        drainingReviews = true
+        try {
+            while (true) {
+                val request = graph.reviewQueue.peek() ?: return
                 val s = graph.settingsStore.current()
-                if (!s.llmConfigured) {
-                    _reviewState.value = ReviewState.Failed("LLM not configured")
-                    return@launch
+                if (!s.llmConfigured) return // stays queued for the next trigger
+                val isCurrent = request.answerRecordId == _lastFlash.value?.answerRecordId
+                if (isCurrent) _reviewState.value = ReviewState.Running
+                try {
+                    val q = store.questionByIdFor(request.netId, request.questionId)
+                    if (q == null) {
+                        // Permanent — the question (or its whole net) is gone.
+                        graph.reviewQueue.remove(request.answerRecordId)
+                        if (isCurrent) {
+                            _reviewState.value = ReviewState.Failed("question no longer exists")
+                        }
+                        continue
+                    }
+                    val verdict = withContext(Dispatchers.IO) {
+                        GradingReviewer.review(
+                            graph.llm,
+                            LlmConfig(s.baseUrl, s.apiKey, s.model),
+                            q, request.userAnswer, request.gradedCorrect
+                        )
+                    }
+                    if (verdict.lesson.isNotEmpty()) {
+                        store.addGradingLessonFor(request.netId, verdict.lesson)
+                    }
+                    graph.reviewQueue.remove(request.answerRecordId)
+                    val flipped = verdict.userWasCorrect != request.gradedCorrect
+                    if (flipped) {
+                        store.overturnAnswerFor(request.netId, request.answerRecordId, verdict.userWasCorrect)
+                        _lastFlash.value?.let { f ->
+                            if (f.answerRecordId == request.answerRecordId) {
+                                _lastFlash.value = f.copy(correct = verdict.userWasCorrect)
+                            }
+                        }
+                        statsEpoch.value = statsEpoch.value + 1L
+                    }
+                    if (isCurrent) {
+                        _reviewState.value =
+                            if (flipped) ReviewState.Overturned(verdict.lesson.takeIf { it.isNotEmpty() })
+                            else ReviewState.Upheld(verdict.lesson.takeIf { it.isNotEmpty() })
+                    }
+                } catch (e: Exception) {
+                    DebugLog.e("Review", "queued review failed", e)
+                    val attempts = request.attempts + 1
+                    if (attempts >= ReviewQueue.MAX_ATTEMPTS) {
+                        graph.reviewQueue.remove(request.answerRecordId)
+                        if (isCurrent) {
+                            _reviewState.value = ReviewState.Failed(e.message ?: e.javaClass.simpleName)
+                        }
+                    } else {
+                        // Transient (network, endpoint hiccup): keep the
+                        // request queued and back off until the next trigger.
+                        graph.reviewQueue.updateAttempts(request.answerRecordId, attempts)
+                        if (isCurrent) _reviewState.value = ReviewState.Queued
+                        return
+                    }
                 }
-                val q = store.questionById(questionId)
-                    ?: throw IllegalStateException("question no longer exists")
-                val verdict = withContext(Dispatchers.IO) {
-                    GradingReviewer.review(
-                        graph.llm,
-                        LlmConfig(s.baseUrl, s.apiKey, s.model),
-                        q, flash.rawAnswer, flash.correct
-                    )
-                }
-                if (verdict.lesson.isNotEmpty()) {
-                    store.addGradingLessonFor(graph.netStore.active().id, verdict.lesson)
-                }
-                if (verdict.userWasCorrect == flash.correct) {
-                    // LLM agrees with the original grade — nothing flips.
-                    _reviewState.value = ReviewState.Upheld(verdict.lesson.takeIf { it.isNotEmpty() })
-                } else {
-                    store.overturnAnswer(recordId, verdict.userWasCorrect)
-                    _lastFlash.value = flash.copy(correct = verdict.userWasCorrect)
-                    statsEpoch.value = statsEpoch.value + 1L
-                    _reviewState.value = ReviewState.Overturned(verdict.lesson.takeIf { it.isNotEmpty() })
-                }
-            } catch (e: Exception) {
-                DebugLog.e("Review", "grading review failed", e)
-                _reviewState.value = ReviewState.Failed(e.message ?: e.javaClass.simpleName)
             }
+        } finally {
+            drainingReviews = false
         }
     }
 
@@ -382,7 +454,11 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
     val genState = graph.generator.state
 
     fun saveLlmSettings(baseUrl: String, apiKey: String, model: String, temperature: Float) {
-        viewModelScope.launch { graph.settingsStore.saveLlm(baseUrl, apiKey, model, temperature) }
+        viewModelScope.launch {
+            graph.settingsStore.saveLlm(baseUrl, apiKey, model, temperature)
+            // The LLM just became available: run the queued dispute backlog.
+            drainReviewQueue()
+        }
     }
 
     fun setDisableThinking(disable: Boolean) {
