@@ -356,6 +356,43 @@ class QuestionStore(
         return changed
     }
 
+    /**
+     * UNDO of [rejectQuestion] (the accidental-skip snackbar): flips the
+     * question back into the live queue and drops the newest matching
+     * entry from the net's rejection pile. Only meaningful within the
+     * undo window — once the pile entry is evicted (cap) or the notes
+     * were re-distilled from it, this still restores serving but the
+     * anti-pattern example may already have informed the generator.
+     * Returns true when this call actually restored something.
+     */
+    fun unrejectQuestion(questionId: String): Boolean {
+        var changed = false
+        synchronized(lock) {
+            val st = activeState()
+            val q = st.byId[questionId] ?: return false
+            if (q.rejected) {
+                val updated = q.copy(rejected = false, skipCount = (q.skipCount - 1).coerceAtLeast(0))
+                val idx = st.questions.indexOfFirst { it.id == questionId }
+                if (idx >= 0) st.questions[idx] = updated
+                st.byId[questionId] = updated
+                // Drop the newest pile entry with the same prompt (the one
+                // this question's rejection pushed).
+                for (i in st.rejectedPile.indices.reversed()) {
+                    if (st.rejectedPile[i].prompt == q.prompt) {
+                        st.rejectedPile.removeAt(i)
+                        break
+                    }
+                }
+                changed = true
+            }
+        }
+        if (changed) {
+            bump()
+            persistImmediately()
+        }
+        return changed
+    }
+
     /** The net's current rejection pile (oldest → newest), for generation context. */
     fun rejectedPileFor(netId: String): List<RejectedQuestion> =
         synchronized(lock) { stateFor(netId).rejectedPile.toList() }

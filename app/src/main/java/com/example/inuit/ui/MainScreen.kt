@@ -81,6 +81,7 @@ fun MainScreen(
     val podcastHistory by viewModel.podcastHistory.collectAsStateWithLifecycle()
     val lastFlash by viewModel.lastFlash.collectAsStateWithLifecycle()
     val reviewState by viewModel.reviewState.collectAsStateWithLifecycle()
+    val lastSkipped by viewModel.lastSkipped.collectAsStateWithLifecycle()
 
     // Domain-tree leaf drill-down: the path and its Question History list.
     var historyDomain by remember { mutableStateOf<String?>(null) }
@@ -126,6 +127,7 @@ fun MainScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         // A new question must always land fully scrolled to the top: content
         // above/below shifts between questions (choice lists, stats chips)
         // and the LazyColumn's scroll offset otherwise drifts downward.
@@ -193,6 +195,22 @@ fun MainScreen(
                     }
                 )
             }
+        }
+
+        // Accidental-skip flash: "Question skipped" + Undo, pinned to the
+        // bottom of the screen for 7 seconds.
+        lastSkipped?.let { skipped ->
+            SkipUndoFlash(
+                questionKey = skipped.id,
+                prompt = skipped.prompt,
+                onUndo = viewModel::undoSkip,
+                onExpire = viewModel::dismissSkipUndo,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp, vertical = 20.dp)
+                    .fillMaxWidth()
+            )
+        }
         }
     }
 

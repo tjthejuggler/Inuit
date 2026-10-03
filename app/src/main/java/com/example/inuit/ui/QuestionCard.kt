@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.inuit.data.GeminiChat
 import com.example.inuit.data.Question
 import com.example.inuit.data.QuestionType
 import com.example.inuit.ui.theme.Indigo
@@ -184,7 +185,19 @@ fun QuestionCard(
             }
 
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.End) {
+            Row(
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Deep-dive this question in the Gemini app (prompt pre-staged).
+                GeminiChatIconButton(
+                    prompt = GeminiChat.buildPrompt(
+                        question.prompt,
+                        topic = question.domains.firstOrNull()
+                    )
+                )
+                Spacer(Modifier.width(8.dp))
                 OutlinedButton(onClick = onSkip, shape = RoundedCornerShape(14.dp)) { Text("Skip") }
             }
             }

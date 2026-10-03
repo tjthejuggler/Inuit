@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.inuit.data.GeminiChat
 import com.example.inuit.ui.theme.Rose
 import com.example.inuit.ui.theme.Teal
 import java.time.Instant
@@ -114,6 +115,17 @@ private fun AnswerFlashDialog(
                     flash.prompt,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(12.dp))
+                // Keep the conversation going: same prompt pre-staging as
+                // the live card, plus what was answered and the correct
+                // answer so the chat resumes mid-story.
+                GeminiChatButton(
+                    prompt = GeminiChat.buildPrompt(
+                        flash.prompt,
+                        userAnswer = flash.userAnswer,
+                        correctAnswer = flash.correctAnswer
+                    )
                 )
                 Spacer(Modifier.height(12.dp))
                 Text(

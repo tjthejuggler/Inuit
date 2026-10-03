@@ -17,6 +17,9 @@
     <queries>
         <package android:name="com.example.tail" />
         <provider android:authorities="com.example.tail.provider" />
+        <!-- Question deep-dives: launch the Gemini app with the prompt
+             pre-staged on the clipboard. -->
+        <package android:name="com.google.android.apps.bard" />
         <!-- Podcast recommendations: discover installed podcast apps and the
              handlers for episode links (Apple Podcasts directory pages). -->
         <intent>

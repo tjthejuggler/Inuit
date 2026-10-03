@@ -344,13 +344,39 @@ class MainViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** Skip = REJECT: the question is permanently retired from the queue and
      *  pushed onto the net's rejection pile so the generator learns what not
-     *  to make (and, once the pile is full, re-distills its rejection notes). */
+     *  to make (and, once the pile is full, re-distills its rejection notes).
+     *  The skipped question is surfaced for the undo snackbar ([lastSkipped],
+     *  cleared after the snackbar's 7 s window or on the next skip). */
     fun skip() {
         _lastFlash.value = null
-        _currentQuestion.value?.let {
+        val skipped = _currentQuestion.value
+        skipped?.let {
             if (store.rejectQuestion(it.id)) graph.generator.maybeRefreshRejectionNotes()
         }
+        _lastSkipped.value = skipped
         pickNext()
+    }
+
+    /** The question the snackbar's Undo restores — non-null only while the
+     *  7 s window is open (the UI drives the lifetime). */
+    private val _lastSkipped = MutableStateFlow<Question?>(null)
+    val lastSkipped: StateFlow<Question?> = _lastSkipped.asStateFlow()
+
+    /** Undo an accidental skip: restores the question to the live queue,
+     *  removes its rejection-pile entry and puts it back on screen. */
+    fun undoSkip() {
+        val q = _lastSkipped.value ?: return
+        _lastSkipped.value = null
+        if (store.unrejectQuestion(q.id)) {
+            _currentQuestion.value = q
+            store.setPendingQuestion(q.id)
+        }
+    }
+
+    /** Closes the skip-undo window without undoing (called by the UI when
+     *  its 7-second lifetime ends). */
+    fun dismissSkipUndo() {
+        _lastSkipped.value = null
     }
 
     // ── stats (real time: recomputed on every submitted answer) ─────────
