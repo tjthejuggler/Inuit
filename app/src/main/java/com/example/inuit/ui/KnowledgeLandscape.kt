@@ -66,8 +66,13 @@ internal enum class LandscapeFilter(val label: String) {
 /**
  * Merges the full [RealmTaxonomy] with the session-frozen stats tree:
  * every realm and territory appears — with proficiency where the user has
- * answers, "uncharted" where they do not. Stats paths outside the taxonomy
- * (LLM exploration frontiers) are kept in a trailing "Frontiers" section.
+ * answers, "uncharted" where they do not.
+ *
+ * Stats paths outside the static taxonomy (e.g. LLM-explored paths) are
+ * seamlessly integrated into their matching top-level section if one
+ * exists (e.g. "Science > Astrobiology" merges into "Science"), or given
+ * their own top-level section if completely novel, rather than being
+ * lumped into an artificial "Frontiers" cluster.
  *
  * Custom nets: the all-knowledge taxonomy is out of scope — the net's own
  * subtopics (prefix already stripped by the snapshot) ARE the landscape,
@@ -127,10 +132,10 @@ internal fun buildLandscape(stats: StatsCalculator.Snapshot): List<LandscapeSect
 
     // 2. taxonomy sections: top-level segment → realms (taxonomy keys)
     val sections = LinkedHashMap<String, MutableList<LandscapeRealm>>()
-    val matchedTops = HashSet<String>()
+    val knownRealmPaths = HashSet<String>()
     for ((key, subs) in RealmTaxonomy.REALMS) {
         val top = key.substringBefore(" > ")
-        matchedTops.add(top)
+        knownRealmPaths.add(key)
         val realmAgg = agg(key)
         val subgroups = subs.map { s ->
             val p = "$key > $s"
@@ -149,23 +154,67 @@ internal fun buildLandscape(stats: StatsCalculator.Snapshot): List<LandscapeSect
         )
     }
 
-    // 3. stats paths the taxonomy does not know (LLM frontiers)
-    val frontierTops = flat.keys.map { it.substringBefore(" > ") }
-        .filter { it !in matchedTops }
-        .distinct()
-    if (frontierTops.isNotEmpty()) {
-        val realms = frontierTops.mapNotNull { top ->
-            val paths = flat.keys.filter { it.substringBefore(" > ") == top }.sorted()
-            if (paths.isEmpty()) return@mapNotNull null
-            val topAgg = agg(top)
-            val subgroups = paths.map { p ->
-                val name = p.split(" > ").drop(1).joinToString(" > ").ifBlank { p }
-                val v = flat[p] ?: IntArray(2)
-                LandscapeSubgroup(name, p, v[0], v[1])
-            }
-            LandscapeRealm(top, top, "Frontiers", topAgg[0], topAgg[1], subgroups)
+    // 3. stats paths not present in the static taxonomy:
+    // Break up frontiers: if a path's top-level section matches an existing section,
+    // merge the realm into that section; otherwise create a new top-level section.
+    // Determine the realm path for each non-taxonomy path:
+    // e.g. "Science > Astrobiology > Extremo" -> realm path "Science > Astrobiology"
+    // e.g. "Frontierland > Sub" -> realm path "Frontierland" or "Frontierland > Sub"
+    // For consistency with taxonomy keys, if path has 2+ segments and top is multi-segment in taxonomy,
+    // or if path has >= 2 segments, the realm is the first 2 segments if top has sub-realms in taxonomy,
+    // or the top segment if it's a standalone realm.
+    // In Inuit's taxonomy:
+    // Sections like "Science" have keys like "Science > Physics", "Science > Chemistry".
+    // Other sections like "Mathematics" have key "Mathematics" and subrealms ("Geometry", etc.).
+    // Let's identify the realm path for any path:
+    // If top is an existing section where all taxonomy keys are multi-segment (e.g. "Science"):
+    //   realmPath is segs.take(2).joinToString(" > ")
+    // Else (single-segment taxonomy section like "Mathematics" or unknown section):
+    //   If segs.size >= 2 and segs[0] in sections: realmPath is segs[0] (or if segs[0] has keys with > 1 seg)
+    // Let's be precise:
+    // Does the section have multi-segment keys in RealmTaxonomy?
+    // Check RealmTaxonomy.REALMS keys starting with "$top > "
+    val multiSegmentTops = RealmTaxonomy.REALMS.keys
+        .filter { it.contains(" > ") }
+        .map { it.substringBefore(" > ") }
+        .toSet()
+
+    // Find all paths in `flat` whose corresponding realm is not already in knownRealmPaths
+    // Group remaining paths by realm path:
+    val extraRealmPaths = LinkedHashMap<String, MutableList<String>>() // realmPath -> all paths under it
+    for (path in flat.keys) {
+        val segs = path.split(" > ").map { it.trim() }.filter { it.isNotEmpty() }
+        if (segs.isEmpty()) continue
+        val top = segs[0]
+        val realmPath = if (top in multiSegmentTops) {
+            if (segs.size >= 2) "${segs[0]} > ${segs[1]}" else segs[0]
+        } else {
+            segs[0]
         }
-        if (realms.isNotEmpty()) sections["Frontiers"] = realms.toMutableList()
+        if (realmPath !in knownRealmPaths) {
+            extraRealmPaths.getOrPut(realmPath) { mutableListOf() }.add(path)
+        }
+    }
+
+    for ((realmPath, paths) in extraRealmPaths) {
+        val top = realmPath.substringBefore(" > ")
+        val realmName = realmPath.substringAfterLast(" > ")
+        val realmAgg = agg(realmPath)
+        val subgroups = paths.filter { it != realmPath }.sorted().map { p ->
+            val name = p.removePrefix(realmPath).removePrefix(" > ").ifBlank { p }
+            val v = flat[p] ?: IntArray(2)
+            LandscapeSubgroup(name, p, v[0], v[1])
+        }
+        sections.getOrPut(top) { mutableListOf() }.add(
+            LandscapeRealm(
+                name = realmName,
+                path = realmPath,
+                section = top,
+                attempts = realmAgg[0],
+                correct = realmAgg[1],
+                subgroups = subgroups
+            )
+        )
     }
 
     // charted sections first (stable — taxonomy order survives among ties),

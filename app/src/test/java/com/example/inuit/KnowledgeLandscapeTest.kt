@@ -80,9 +80,10 @@ class KnowledgeLandscapeTest {
         val math = sections.first { it.name == "Mathematics" }
         assertTrue(math.realms.all { !it.charted })
 
-        // stats outside the taxonomy land in the Frontiers section
-        val frontiers = sections.first { it.name == "Frontiers" }
-        assertEquals(1, frontiers.attempts)
+        // stats outside the taxonomy get their own section if novel, or merge into an existing section
+        val frontierland = sections.first { it.name == "Frontierland" }
+        assertEquals(1, frontierland.attempts)
+        assertEquals("Frontierland", frontierland.realms.first().name)
     }
 
     @Test
@@ -202,8 +203,17 @@ class KnowledgeLandscapeTest {
     }
 
     @Test
-    fun `frontier section keeps its generic name without a net`() {
-        val sections = buildLandscape(snapshot(listOf(node("Frontierland", "Frontierland", 1, 1))))
-        assertEquals(1, sections.first { it.name == "Frontiers" }.attempts)
+    fun `frontiers are broken up into matching sections or get their own section`() {
+        // Novel area gets its own top-level section
+        val sections = buildLandscape(snapshot(listOf(
+            node("Frontierland", "Frontierland", 1, 1),
+            node("Science", "Science", 0, 0, listOf(
+                node("Astrobiology", "Science > Astrobiology", 2, 2)
+            ))
+        )))
+        assertEquals(1, sections.first { it.name == "Frontierland" }.attempts)
+        // Matching section receives the non-taxonomy realm
+        val science = sections.first { it.name == "Science" }
+        assertTrue(science.realms.any { it.name == "Astrobiology" })
     }
 }
