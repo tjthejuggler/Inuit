@@ -247,6 +247,7 @@ private fun NetEditDialog(
     var wCrossNet by rememberSaveable { mutableStateOf(initialMix[SourceMix.CROSS_NET] ?: 0) }
     var wTailText by rememberSaveable { mutableStateOf(initialMix[SourceMix.TAIL_TEXT] ?: 0) }
     var wGdrive by rememberSaveable { mutableStateOf(initialMix[SourceMix.GDRIVE] ?: 0) }
+    var wShared by rememberSaveable { mutableStateOf(initialMix[SourceMix.SHARED] ?: 0) }
     // Custom sources: label + guidance + own weight. Plain remember (not
     // saveable) — CustomSource isn't Bundle-saveable; losing an in-progress
     // dialog on process death is acceptable.
@@ -283,7 +284,7 @@ private fun NetEditDialog(
 
     /** Sum of all accent weights — whatever is left of 100 is core. */
     fun othersSum(): Int =
-        wLocation + wDate + wCrossNet + wTailText + wGdrive +
+        wLocation + wDate + wCrossNet + wTailText + wGdrive + wShared +
             customs.sumOf { customWeights[it.id] ?: 0 }
 
     fun toggleSource(id: String) {
@@ -545,6 +546,34 @@ private fun NetEditDialog(
                             .padding(start = 8.dp)
                     )
                 }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .padding(vertical = 2.dp)
+                ) {
+                    InfoName(
+                        "Shared snippets",
+                        "Questions drawn from text you shared to Inuit from " +
+                            "anywhere on your phone (share menu → Inuit). " +
+                            "Full facts become quiz material and related " +
+                            "questions; short topics inspire new questions.",
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text("$wShared%", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = wShared.toFloat(),
+                        onValueChange = { raw ->
+                            wShared = snapAccent(raw)
+                        },
+                        valueRange = 0f..100f,
+                        steps = 19,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp)
+                    )
+                }
 
                 // ── custom sources ─────────────────────────────────────────
                 customs.forEach { src ->
@@ -691,6 +720,7 @@ private fun NetEditDialog(
                         dateEnabled = wDate > 0,
                         tailTextEnabled = wTailText > 0,
                         gdriveEnabled = wGdrive > 0,
+                        sharedTextEnabled = wShared > 0,
                         tailTextHabits = selectedTailHabits,
                         sourceNetIds = selectedSources,
                         sourceWeights = SourceMix.normalize(
@@ -700,6 +730,7 @@ private fun NetEditDialog(
                                 put(SourceMix.CROSS_NET, wCrossNet)
                                 put(SourceMix.TAIL_TEXT, wTailText)
                                 put(SourceMix.GDRIVE, wGdrive)
+                                put(SourceMix.SHARED, wShared)
                                 customs.forEach { put(SourceMix.customKey(it.id), customWeights[it.id] ?: 0) }
                             }
                         ),

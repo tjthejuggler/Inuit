@@ -45,6 +45,9 @@ data class Net(
     /** Gemini-chat-export documents pulled from the user's Google Drive
      *  root (kept in sync by [com.example.inuit.data.gdrive.GDriveSync]). */
     val gdriveEnabled: Boolean = false,
+    /** Texts the user shared into Inuit from anywhere on the phone
+     *  (see [SharedTextStore]). */
+    val sharedTextEnabled: Boolean = false,
     /** Which Tail text-input habits this net may draw from — a per-net
      *  subset of the habits Tail itself is willing to share. */
     val tailTextHabits: List<String> = emptyList(),
@@ -66,7 +69,7 @@ data class Net(
         if (sourceWeights.isEmpty() && customSources.isEmpty())
             SourceMix.legacy(
                 locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(),
-                tailTextEnabled, gdriveEnabled
+                tailTextEnabled, gdriveEnabled, sharedTextEnabled
             )
         else SourceMix.normalize(sourceWeights)
 
@@ -80,6 +83,7 @@ data class Net(
         put("srcNets", JSONArray(sourceNetIds))
         put("tailText", tailTextEnabled)
         put("gdrive", gdriveEnabled)
+        put("sharedText", sharedTextEnabled)
         put("tailHabits", JSONArray(tailTextHabits))
         put("mix", JSONObject(mix()))
         put("customSrcs", JSONArray(customSources.map { it.toJson() }))
@@ -98,6 +102,7 @@ data class Net(
             val sourceNetIds = o.optJSONArray("srcNets").toStringList().filter { it.isNotBlank() }
             val tailTextEnabled = o.optBoolean("tailText", false)
             val gdriveEnabled = o.optBoolean("gdrive", false)
+            val sharedTextEnabled = o.optBoolean("sharedText", false)
             // Mix migration: nets saved before source mixes existed keep
             // working — their accent toggles become small legacy shares.
             val mixObj = o.optJSONObject("mix")
@@ -119,11 +124,12 @@ data class Net(
                 sourceNetIds = sourceNetIds,
                 tailTextEnabled = tailTextEnabled,
                 gdriveEnabled = gdriveEnabled,
+                sharedTextEnabled = sharedTextEnabled,
                 tailTextHabits = o.optJSONArray("tailHabits").toStringList().filter { it.isNotBlank() }.distinct(),
                 sourceWeights = weights
                     ?: SourceMix.legacy(
                         locationEnabled, dateEnabled, sourceNetIds.isNotEmpty(),
-                        tailTextEnabled, gdriveEnabled
+                        tailTextEnabled, gdriveEnabled, sharedTextEnabled
                     ),
                 customSources = customs,
                 createdAt = o.optLong("ts", 0L)
@@ -174,8 +180,10 @@ object SourceMix {
     const val TAIL_TEXT = "tailText"
     /** Questions anchored in distilled Google Drive Gemini-chat documents. */
     const val GDRIVE = "gdrive"
+    /** Questions drawn from / inspired by text the user shared into the app. */
+    const val SHARED = "shared"
 
-    val ACCENTS = listOf(LOCATION, DATE, CROSS_NET, TAIL_TEXT, GDRIVE)
+    val ACCENTS = listOf(LOCATION, DATE, CROSS_NET, TAIL_TEXT, GDRIVE, SHARED)
 
     /** Share an accent got when it was a plain on/off toggle (legacy migration). */
     const val LEGACY_ACCENT_PERCENT = 8
@@ -212,7 +220,8 @@ object SourceMix {
         date: Boolean,
         crossNet: Boolean,
         tailText: Boolean,
-        gdrive: Boolean = false
+        gdrive: Boolean = false,
+        shared: Boolean = false
     ): Map<String, Int> = normalize(
         buildMap {
             if (location) put(LOCATION, LEGACY_ACCENT_PERCENT)
@@ -220,6 +229,7 @@ object SourceMix {
             if (crossNet) put(CROSS_NET, LEGACY_ACCENT_PERCENT)
             if (tailText) put(TAIL_TEXT, LEGACY_ACCENT_PERCENT)
             if (gdrive) put(GDRIVE, LEGACY_ACCENT_PERCENT)
+            if (shared) put(SHARED, LEGACY_ACCENT_PERCENT)
         }
     )
 }
@@ -348,6 +358,7 @@ class NetStore(
                         sourceNetIds = sources,
                         tailTextEnabled = net.tailTextEnabled,
                         gdriveEnabled = net.gdriveEnabled,
+                        sharedTextEnabled = net.sharedTextEnabled,
                         tailTextHabits = net.tailTextHabits.distinct(),
                         sourceWeights = net.mix(),
                         customSources = net.customSources

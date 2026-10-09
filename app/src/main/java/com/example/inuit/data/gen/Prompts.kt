@@ -180,12 +180,13 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
         val crossTarget = if (accents?.crossNetLines?.isNotEmpty() == true) target(SourceMix.CROSS_NET) else 0
         val tailTarget = if (accents?.tailTextLines?.isNotEmpty() == true) target(SourceMix.TAIL_TEXT) else 0
         val gdriveTarget = if (accents?.gdriveLines?.isNotEmpty() == true) target(SourceMix.GDRIVE) else 0
+        val sharedTarget = if (accents?.sharedLines?.isNotEmpty() == true) target(SourceMix.SHARED) else 0
         // Custom sources are always "available" — their guidance is static.
         val customTargets = net?.customSources
             ?.map { it to target(SourceMix.customKey(it.id)) }
             ?.filter { it.second > 0 && it.first.label.isNotBlank() }
             ?: emptyList()
-        val accentTotal = locTarget + dateTarget + crossTarget + tailTarget + gdriveTarget +
+        val accentTotal = locTarget + dateTarget + crossTarget + tailTarget + gdriveTarget + sharedTarget +
             customTargets.sumOf { it.second }
         if (accentTotal > 0) {
             // Null accents can still reach here via custom sources alone.
@@ -198,6 +199,7 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
             if (crossTarget > 0) aims.add("$crossTarget anchored in the OTHER NETS below")
             if (tailTarget > 0) aims.add("$tailTarget inspired by the LIFE-LOG below")
             if (gdriveTarget > 0) aims.add("$gdriveTarget drawing on the DRIVE NOTES below")
+            if (sharedTarget > 0) aims.add("$sharedTarget drawing on the SHARED TEXTS below")
             customTargets.forEach { (src, t) -> aims.add("$t from ${src.label}") }
             sb.append(aims.joinToString(", ")).append("; the remaining ").append(batchSize - accentTotal)
                 .append(" are core questions driven by the rest of this context. ")
@@ -231,6 +233,16 @@ OUTPUT — reply with a single JSON object, no markdown fences, no commentary:
                 sb.append("  → anchor questions in the facts themselves (entities, numbers, mechanisms), ")
                     .append("keeping every question inside this net's scope with a verifiable answer. ")
                     .append("Do not mention the documents or that the material came from notes.\n")
+            }
+            if (sharedTarget > 0) {
+                sb.append("- SHARED TEXTS (${sharedTarget} question(s); text the user shared into the app from elsewhere on their phone):\n")
+                a.sharedLines.forEach { sb.append("  ").append(it).append('\n') }
+                sb.append("  → each snippet is labeled (facts) or (topic). (facts) snippets carry full ")
+                    .append("factual statements: quiz those facts AND closely related material (same ")
+                    .append("entities, mechanisms, consequences). (topic) snippets are a few words or a ")
+                    .append("bare theme: use them only as INSPIRATION for creating questions about that ")
+                    .append("subject — never quote the snippet and never test the wording itself. Every ")
+                    .append("question must still satisfy Rule 1's factual rigor and fit this net's scope.\n")
             }
             for ((src, t) in customTargets) {
                 sb.append("- ${src.label} (${t} question(s); the user's own custom direction for this net):\n")

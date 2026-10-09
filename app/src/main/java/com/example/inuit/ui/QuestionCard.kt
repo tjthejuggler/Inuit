@@ -99,12 +99,17 @@ fun QuestionCard(
             }
 
             Spacer(Modifier.height(14.dp))
-            Text(
-                question.prompt,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            // Selectable so the question text can be copied or re-shared
+            // (e.g. back into Inuit's shared-snippets source) from the
+            // selection toolbar's Share action.
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(
+                    question.prompt,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
             Spacer(Modifier.height(18.dp))
 
             // ── answer input per type ─────────────────────────────────────

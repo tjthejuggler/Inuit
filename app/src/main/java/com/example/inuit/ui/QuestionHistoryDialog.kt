@@ -111,11 +111,13 @@ private fun AnswerFlashDialog(
         },
         text = {
             Column {
-                Text(
-                    flash.prompt,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(
+                        flash.prompt,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 // Keep the conversation going: same prompt pre-staging as
                 // the live card, plus what was answered and the correct
@@ -272,13 +274,16 @@ private fun HistoryRow(item: MainViewModel.QuestionHistoryItem) {
             .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                item.prompt,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = if (expanded) Int.MAX_VALUE else 2,
-                overflow = TextOverflow.Ellipsis,
+            androidx.compose.foundation.text.selection.SelectionContainer(
                 modifier = Modifier.weight(1f)
-            )
+            ) {
+                Text(
+                    item.prompt,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = if (expanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Spacer(Modifier.width(8.dp))
             Icon(
                 if (item.lastCorrect) Icons.Default.CheckCircle else Icons.Default.Cancel,

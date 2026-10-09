@@ -39,7 +39,8 @@ class AppGraph(context: Context) {
     val harvester = Harvester(store, llm, netStore)
     val tail = TailIntegration(context)
     val gdriveFacts = GDriveFactStore(context)
-    val accents = AccentsBuilder(LocationProvider(appContext), netStore, store, tail, gdriveFacts)
+    val sharedTexts = com.example.inuit.data.SharedTextStore(context)
+    val accents = AccentsBuilder(LocationProvider(appContext), netStore, store, tail, gdriveFacts, sharedTexts)
     val generator = QuestionGenerator(store, settingsStore, netStore, llm, harvester, accents, appScope)
     val podcasts = PodcastRecommender(store, settingsStore, netStore, llm, appScope)
 

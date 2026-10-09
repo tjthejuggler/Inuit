@@ -49,11 +49,16 @@ data class NetAccents(
     /** Distilled facts from Gemini-chat exports in the user's Drive root
      *  (see [com.example.inuit.data.gdrive.GDriveFactStore]). Empty when the
      *  net has the accent off or nothing has been ingested yet. */
-    val gdriveLines: List<String> = emptyList()
+    val gdriveLines: List<String> = emptyList(),
+    /** Texts the user shared into the app from anywhere on the phone
+     *  (see [com.example.inuit.data.SharedTextStore]). Empty when the net
+     *  has the source off or the pool is empty. */
+    val sharedLines: List<String> = emptyList()
 ) {
     val isEmpty: Boolean
         get() = locationLine == null && dateLines.isEmpty() &&
-            crossNetLines.isEmpty() && tailTextLines.isEmpty() && gdriveLines.isEmpty()
+            crossNetLines.isEmpty() && tailTextLines.isEmpty() &&
+            gdriveLines.isEmpty() && sharedLines.isEmpty()
 }
 
 // ── Date accent (pure — unit tested) ──────────────────────────────────────
@@ -329,7 +334,9 @@ class AccentsBuilder(
     /** Tail bridge; null keeps the life-log accent permanently off. */
     private val tail: TailIntegration? = null,
     /** Drive-doc fact pool; null keeps the Drive accent permanently off. */
-    private val gdriveFacts: com.example.inuit.data.gdrive.GDriveFactStore? = null
+    private val gdriveFacts: com.example.inuit.data.gdrive.GDriveFactStore? = null,
+    /** Shared-text pool; null keeps the shared-text source permanently off. */
+    private val sharedTexts: com.example.inuit.data.SharedTextStore? = null
 ) {
 
     suspend fun build(net: Net): NetAccents {
@@ -347,7 +354,9 @@ class AccentsBuilder(
             if (mix.getValue(SourceMix.TAIL_TEXT) > 0 && net.tailTextHabits.isNotEmpty()) tailTextLines(net) else emptyList()
         val gdriveLines =
             if (mix.getValue(SourceMix.GDRIVE) > 0) gdriveFacts?.accentLines() ?: emptyList() else emptyList()
-        return NetAccents(locationLine, dateLines, crossNetLines, tailTextLines, gdriveLines)
+        val sharedLines =
+            if (mix.getValue(SourceMix.SHARED) > 0) sharedTexts?.accentLines() ?: emptyList() else emptyList()
+        return NetAccents(locationLine, dateLines, crossNetLines, tailTextLines, gdriveLines, sharedLines)
     }
 
     /**

@@ -68,6 +68,23 @@
             </intent-filter>
         </activity>
 
+        <!-- Share-sheet trampoline: text shared from anywhere on the phone
+             feeds the shared-snippets question source (weight it in a net's
+             mix). No UI — saves, toasts, finishes; the user never leaves
+             the app they shared from. -->
+        <activity
+            android:name=".ShareReceiverActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
         <!-- Keeps batch generation alive when the app is closed or the screen
              is off; START_STICKY restarts it (and the batch) after process death. -->
         <service
